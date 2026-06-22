@@ -38,11 +38,24 @@ interface Vehicle {
   createdAt: string;
 }
 
+export interface Customer {
+  _id: string;
+  name: string;
+  phone: string;
+  address?: string;
+  area?: string;
+  subscriptionCans: number;
+  isActive: boolean;
+  createdAt: string;
+}
+
 interface SupplyLog {
   _id: string;
   suppliedAt: string;
   formattedSuppliedAt?: string;
-  pointName: string;
+  pointName?: string;
+  cansDelivered?: number;
+  cansTakenBack?: number;
   notes?: string;
   amount?: number;
   logType?: "water" | "cash";
@@ -50,6 +63,12 @@ interface SupplyLog {
   adminRemark?: string;
   billImageUrl?: string;
   billImagePublicId?: string;
+  customer?: {
+    _id: string;
+    name: string;
+    phone?: string;
+    area?: string;
+  };
   driver?: {
     _id: string;
     name: string;
@@ -74,6 +93,7 @@ interface PaginatedSupplyLogs {
 
 const DRIVERS_KEY = ["admin", "drivers"];
 const VEHICLES_KEY = ["admin", "vehicles"];
+const CUSTOMERS_KEY = ["admin", "customers"];
 
 export function useAdminDrivers() {
   return useQuery<Driver[]>({
@@ -107,6 +127,22 @@ export function useAdminVehicles() {
   });
 }
 
+export function useAdminCustomers() {
+  return useQuery<Customer[]>({
+    queryKey: CUSTOMERS_KEY,
+    staleTime: 1000 * 60 * 5,
+    gcTime: 1000 * 60 * 30,
+    queryFn: async () => {
+      const res = await fetch("/api/admin/customers", { cache: "no-store" });
+      if (!res.ok) {
+        throw new Error("Failed to fetch customers");
+      }
+      const data = (await res.json()) as unknown;
+      return Array.isArray(data) ? (data as Customer[]) : [];
+    },
+  });
+}
+
 export function useAdminTodayStats(todayIso: string) {
   return useQuery({
     queryKey: ["admin", "stats", todayIso],
@@ -114,11 +150,12 @@ export function useAdminTodayStats(todayIso: string) {
     queryFn: async () => {
       const res = await fetch(`/api/admin/stats?date=${encodeURIComponent(todayIso)}`, { cache: "no-store" });
       if (!res.ok) throw new Error("Failed to load dashboard stats");
-      const data = (await res.json()) as { drivers: number; vehicles: number; todaySupplies: number };
+      const data = (await res.json()) as { drivers: number; vehicles: number; todayDeliveries: number; customers: number };
       return {
         drivers: data.drivers,
         vehicles: data.vehicles,
-        todaySupplies: data.todaySupplies,
+        todayDeliveries: data.todayDeliveries,
+        customers: data.customers,
       };
     },
   });
@@ -175,7 +212,6 @@ export function useAdminAddedSupplies(filters: {
     staleTime: 1000 * 30,
     queryFn: async () => {
       const params = new URLSearchParams();
-      params.set("amountStatus", "added");
       params.set("logType", "water");
       if (filters.date) params.set("date", filters.date);
       if (filters.month) params.set("month", filters.month);

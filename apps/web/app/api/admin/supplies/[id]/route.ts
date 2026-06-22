@@ -6,6 +6,7 @@ import { deleteImageFromCloudinary } from "../../../../../lib/cloudinary";
 import { connectToDatabase } from "../../../../../lib/mongodb";
 import SupplyLog from "../../../../../models/SupplyLog";
 import Vehicle from "../../../../../models/Vehicle";
+import Customer from "../../../../../models/Customer";
 
 export async function PATCH(
   req: NextRequest,
@@ -24,10 +25,11 @@ export async function PATCH(
   const body = (await req.json()) as {
     amount?: number | string;
     adminRemark?: string;
-    pointName?: string;
     notes?: string;
     suppliedAt?: string;
     vehicleId?: string;
+    cansDelivered?: number | string;
+    cansTakenBack?: number | string;
     cashType?: "debit" | "fuel";
   };
   const amountValue =
@@ -35,17 +37,21 @@ export async function PATCH(
       ? undefined
       : Number(body.amount);
   const adminRemark = body.adminRemark?.trim();
-  const pointName = body.pointName?.trim();
   const notes = body.notes?.trim();
   const suppliedAt = body.suppliedAt ? new Date(body.suppliedAt) : undefined;
   const vehicleId = body.vehicleId?.trim();
   const cashType = body.cashType;
+  const cansDelivered =
+    body.cansDelivered === undefined || body.cansDelivered === ""
+      ? undefined
+      : Number(body.cansDelivered);
+  const cansTakenBack =
+    body.cansTakenBack === undefined || body.cansTakenBack === ""
+      ? undefined
+      : Number(body.cansTakenBack);
 
   if (amountValue !== undefined && (!Number.isFinite(amountValue) || amountValue < 0)) {
     return NextResponse.json({ error: "Amount must be a valid non-negative number." }, { status: 400 });
-  }
-  if (body.pointName !== undefined && !pointName) {
-    return NextResponse.json({ error: "Point name cannot be empty." }, { status: 400 });
   }
   if (body.suppliedAt !== undefined && (!suppliedAt || Number.isNaN(suppliedAt.getTime()))) {
     return NextResponse.json({ error: "Invalid date/time." }, { status: 400 });
@@ -55,6 +61,12 @@ export async function PATCH(
   }
   if (cashType !== undefined && cashType !== "debit" && cashType !== "fuel") {
     return NextResponse.json({ error: "Invalid cash type." }, { status: 400 });
+  }
+  if (cansDelivered !== undefined && (!Number.isInteger(cansDelivered) || cansDelivered < 0)) {
+    return NextResponse.json({ error: "Cans delivered must be a non-negative integer." }, { status: 400 });
+  }
+  if (cansTakenBack !== undefined && (!Number.isInteger(cansTakenBack) || cansTakenBack < 0)) {
+    return NextResponse.json({ error: "Cans taken back must be a non-negative integer." }, { status: 400 });
   }
 
   await connectToDatabase();
@@ -69,33 +81,33 @@ export async function PATCH(
   const setPayload: {
     amount?: number;
     adminRemark?: string;
-    pointName?: string;
     notes?: string;
     suppliedAt?: Date;
     vehicle?: Types.ObjectId;
+    cansDelivered?: number;
+    cansTakenBack?: number;
     cashType?: "debit" | "fuel";
   } = {};
-  if (amountValue !== undefined) {
-    setPayload.amount = amountValue;
-  }
-  if (adminRemark !== undefined) {
-    setPayload.adminRemark = adminRemark;
-  }
-  if (pointName !== undefined) {
-    setPayload.pointName = pointName;
-  }
-  if (body.notes !== undefined) {
-    setPayload.notes = notes;
-  }
-  if (suppliedAt !== undefined) {
-    setPayload.suppliedAt = suppliedAt;
-  }
+  if (amountValue !== undefined) setPayload.amount = amountValue;
+  if (adminRemark !== undefined) setPayload.adminRemark = adminRemark;
+  if (body.notes !== undefined) setPayload.notes = notes;
+  if (suppliedAt !== undefined) setPayload.suppliedAt = suppliedAt;
   if (vehicleId !== undefined && vehicleId !== "") {
     setPayload.vehicle = new Types.ObjectId(vehicleId);
   }
-  if (cashType !== undefined) {
-    setPayload.cashType = cashType;
+  if (cansDelivered !== undefined) {
+    setPayload.cansDelivered = cansDelivered;
+    // Recalculate amount based on updated cansDelivered × customer's cashPerCan
+    const existingLog = await SupplyLog.findById(id).lean();
+    if (existingLog?.logType === "water" && existingLog.customer) {
+      const customer = await Customer.findById(existingLog.customer).lean();
+      if (customer?.cashPerCan !== undefined) {
+        setPayload.amount = cansDelivered * customer.cashPerCan;
+      }
+    }
   }
+  if (cansTakenBack !== undefined) setPayload.cansTakenBack = cansTakenBack;
+  if (cashType !== undefined) setPayload.cashType = cashType;
 
   if (Object.keys(setPayload).length === 0) {
     return NextResponse.json({ error: "Nothing to update." }, { status: 400 });
@@ -113,6 +125,7 @@ export async function PATCH(
   const updated = await SupplyLog.findById(id)
     .populate("driver", "name username phone")
     .populate("vehicle", "name vehicleNumber capacity")
+    .populate("customer", "name phone area")
     .lean();
 
   if (!updated) {

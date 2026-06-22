@@ -20,6 +20,8 @@ interface SupplyLog {
   suppliedAt: string;
   formattedSuppliedAt?: string;
   pointName?: string;
+  cansDelivered?: number;
+  cansTakenBack?: number;
   notes?: string;
   amount?: number;
   logType?: "water" | "cash";
@@ -27,6 +29,12 @@ interface SupplyLog {
   adminRemark?: string;
   billImageUrl?: string;
   billImagePublicId?: string;
+  customer?: {
+    _id: string;
+    name: string;
+    phone?: string;
+    area?: string;
+  };
   driver?: {
     _id: string;
     name: string;
@@ -45,7 +53,9 @@ type ExportRow = {
   no: number;
   dateTime: string;
   driver: string;
-  point?: string;
+  customer?: string;
+  cans?: string;
+  cansTakenBack?: string;
   vehicle?: string;
   amount: string;
   cashType?: string;
@@ -134,6 +144,8 @@ export default function SuppliesPage() {
   const [editingRemark, setEditingRemark] = useState("");
   const [editingCashType, setEditingCashType] = useState<"debit" | "fuel">("debit");
   const [editingDriverRemark, setEditingDriverRemark] = useState("");
+  const [editingCansDelivered, setEditingCansDelivered] = useState("");
+  const [editingCansTakenBack, setEditingCansTakenBack] = useState("");
   const [editSaving, setEditSaving] = useState(false);
   const [deleteSaving, setDeleteSaving] = useState(false);
 
@@ -246,14 +258,24 @@ export default function SuppliesPage() {
       (sum, log) => sum + (log.amount ?? 0),
       0,
     );
+    const totalCans = effectiveLogs.reduce(
+      (sum, log) => sum + (log.cansDelivered ?? 0),
+      0,
+    );
+    const totalCansTakenBack = effectiveLogs.reduce(
+      (sum, log) => sum + (log.cansTakenBack ?? 0),
+      0,
+    );
     return {
       total: effectiveLogs.length,
       uniqueDrivers: new Set(
         effectiveLogs.map((l) => l.driver?._id ?? ""),
       ).size,
-      uniqueVehicles: new Set(
-        effectiveLogs.map((l) => l.vehicle?._id ?? ""),
+      uniqueCustomers: new Set(
+        effectiveLogs.map((l) => l.customer?._id ?? l.pointName ?? ""),
       ).size,
+      totalCans,
+      totalCansTakenBack,
       totalAmount,
     };
   }, [effectiveLogs]);
@@ -268,7 +290,9 @@ export default function SuppliesPage() {
       no: index + 1,
       dateTime: formatDateTime(log.suppliedAt),
       driver: `${log.driver?.name ?? ""} (@${log.driver?.username ?? ""})`,
-      point: log.pointName ?? "-",
+      customer: log.customer?.name ?? log.pointName ?? "-",
+      cans: log.cansDelivered !== undefined ? String(log.cansDelivered) : "-",
+      cansTakenBack: log.cansTakenBack !== undefined ? String(log.cansTakenBack) : "-",
       vehicle: `${log.vehicle?.name ?? ""} - ${log.vehicle?.vehicleNumber ?? ""}`,
       amount: log.amount !== undefined ? String(log.amount) : "-",
       cashType: log.cashType ?? "-",
@@ -313,20 +337,32 @@ export default function SuppliesPage() {
           <th>No.</th>
           <th>Date & Time</th>
           <th>Driver</th>
-          <th>Point</th>
-          <th>Vehicle</th>
+          <th>Customer</th>
+          <th>Cans Del.</th>
+          <th>Taken Back</th>
           <th>Amount</th>
           <th>Admin Remark</th>
         </tr>`;
     const tableRows = rows
       .map(
-        (r) => `<tr>
+        (r) => isCashTab
+          ? `<tr>
           <td>${r.no}</td>
           <td>${r.dateTime}</td>
           <td>${r.driver}</td>
-          <td>${isCashTab ? r.cashType : r.point}</td>
-          <td>${isCashTab ? r.amount : r.vehicle}</td>
-          <td>${isCashTab ? r.note : r.amount}</td>
+          <td>${r.cashType}</td>
+          <td>${r.amount}</td>
+          <td>${r.note}</td>
+          <td>${r.remark}</td>
+        </tr>`
+          : `<tr>
+          <td>${r.no}</td>
+          <td>${r.dateTime}</td>
+          <td>${r.driver}</td>
+          <td>${r.customer}</td>
+          <td>${r.cans}</td>
+          <td>${r.cansTakenBack}</td>
+          <td>${r.amount}</td>
           <td>${r.remark}</td>
         </tr>`
       )
@@ -388,10 +424,11 @@ export default function SuppliesPage() {
           { key: "no", title: "No.", width: 60 },
           { key: "dateTime", title: "Date & Time", width: 200 },
           { key: "driver", title: "Driver", width: 260 },
-          { key: "point", title: "Point", width: 280 },
-          { key: "vehicle", title: "Vehicle", width: 260 },
-          { key: "amount", title: "Amount", width: 120 },
-          { key: "remark", title: "Admin Remark", width: 280 },
+          { key: "customer", title: "Customer", width: 220 },
+          { key: "cans", title: "Cans Del.", width: 80 },
+          { key: "cansTakenBack", title: "Taken Back", width: 90 },
+          { key: "amount", title: "Amount", width: 110 },
+          { key: "remark", title: "Admin Remark", width: 240 },
         ];
 
     const outerPadding = 20;
@@ -522,12 +559,14 @@ export default function SuppliesPage() {
     setEditingRemark(log.adminRemark ?? "");
     setEditingCashType(log.cashType === "fuel" ? "fuel" : "debit");
     setEditingDriverRemark(log.notes ?? "");
+    setEditingCansDelivered(log.cansDelivered !== undefined ? String(log.cansDelivered) : "");
+    setEditingCansTakenBack(log.cansTakenBack !== undefined ? String(log.cansTakenBack) : "");
     setError("");
   }
 
   async function saveEdit() {
     if (!editingLog) return;
-    if (!editingAmount || Number(editingAmount) < 0) {
+    if (editingLog.logType === "cash" && (!editingAmount || Number(editingAmount) < 0)) {
       setError("Please enter a valid amount.");
       return;
     }
@@ -536,16 +575,21 @@ export default function SuppliesPage() {
     const res = await fetch(`/api/admin/supplies/${editingLog._id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        amount: Number(editingAmount),
-        adminRemark: editingRemark,
-        ...(editingLog.logType === "cash"
+      body: JSON.stringify(
+        editingLog.logType === "cash"
           ? {
+              amount: Number(editingAmount),
+              adminRemark: editingRemark,
               cashType: editingCashType,
               notes: editingDriverRemark,
             }
-          : {}),
-      }),
+          : {
+              cansDelivered: editingCansDelivered !== "" ? Number(editingCansDelivered) : undefined,
+              cansTakenBack: editingCansTakenBack !== "" ? Number(editingCansTakenBack) : undefined,
+              notes: editingDriverRemark,
+              adminRemark: editingRemark,
+            }
+      ),
     });
     setEditSaving(false);
 
@@ -606,7 +650,7 @@ export default function SuppliesPage() {
   return (
     <div>
       <div style={{ marginBottom: "1rem" }}>
-          <h1>Supply</h1>
+          <h1>Deliveries</h1>
           <div
             style={{
               marginTop: "0.75rem",
@@ -638,7 +682,7 @@ export default function SuppliesPage() {
                   flex: 1,
                 }}
               >
-                Water supplies
+                Deliveries
               </button>
               <button
                 type="button"
@@ -748,7 +792,13 @@ export default function SuppliesPage() {
       >
         <span><strong style={{ color: "var(--text-primary)" }}>Total:</strong> {summary.total}</span>
         <span><strong style={{ color: "var(--text-primary)" }}>Drivers:</strong> {summary.uniqueDrivers}</span>
-        <span><strong style={{ color: "var(--text-primary)" }}>Vehicles:</strong> {summary.uniqueVehicles}</span>
+        {supplyTab === "water" && (
+          <>
+            <span><strong style={{ color: "var(--text-primary)" }}>Customers:</strong> {summary.uniqueCustomers}</span>
+            <span><strong style={{ color: "var(--text-primary)" }}>Cans Del.:</strong> {summary.totalCans}</span>
+            <span><strong style={{ color: "var(--text-primary)" }}>Taken Back:</strong> {summary.totalCansTakenBack}</span>
+          </>
+        )}
         <span style={{ fontSize: "1.05rem", fontWeight: 800, color: "var(--text-primary)" }}>
           Total Amount: {summary.totalAmount.toLocaleString("en-IN")}
         </span>
@@ -778,8 +828,9 @@ export default function SuppliesPage() {
                   <thead>
                     <tr>
                       <th>S.No</th>
-                      {supplyTab === "water" ? <th>Point</th> : <th>Amount</th>}
-                      {supplyTab === "water" ? <th>Amount</th> : <th>Type</th>}
+                      {supplyTab === "water" ? <th>Customer</th> : <th>Amount</th>}
+                      {supplyTab === "water" ? <th>Cans</th> : <th>Type</th>}
+                      {supplyTab === "water" && <th>Amount</th>}
                       <th>Driver</th>
                     </tr>
                   </thead>
@@ -813,7 +864,7 @@ export default function SuppliesPage() {
                           style={{ cursor: "pointer" }}
                         >
                           {supplyTab === "water"
-                            ? maskText(log.pointName ?? "-")
+                            ? maskText(log.customer?.name ?? log.pointName ?? "-")
                             : (log.amount !== undefined ? log.amount : "-")}
                         </td>
                         <td
@@ -829,7 +880,12 @@ export default function SuppliesPage() {
                           style={{ cursor: "pointer" }}
                         >
                           {supplyTab === "water" ? (
-                            log.amount !== undefined ? log.amount : "-"
+                            <div>
+                              <strong>{log.cansDelivered ?? "-"}</strong>
+                              {log.cansTakenBack !== undefined && (
+                                <div style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>↩ {log.cansTakenBack}</div>
+                              )}
+                            </div>
                           ) : log.cashType === "fuel" ? (
                             log.billImageUrl ? (
                               <button
@@ -852,6 +908,22 @@ export default function SuppliesPage() {
                             </span>
                           )}
                         </td>
+                        {supplyTab === "water" && (
+                          <td
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => setSelectedLog(log)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                setSelectedLog(log);
+                              }
+                            }}
+                            style={{ cursor: "pointer" }}
+                          >
+                            {log.amount !== undefined ? log.amount : "-"}
+                          </td>
+                        )}
                         <td
                           role="button"
                           tabIndex={0}
@@ -941,10 +1013,25 @@ export default function SuppliesPage() {
                   <div style={{ fontWeight: 600 }}>{selectedLog.driver.name}</div>
                 </div>
               )}
-              {selectedLog.pointName && (
+              {(selectedLog.customer?.name || selectedLog.pointName) && (
                 <div>
-                  <div className="text-sm text-muted">Point</div>
-                  <div style={{ fontWeight: 600 }}>{selectedLog.pointName}</div>
+                  <div className="text-sm text-muted">Customer</div>
+                  <div style={{ fontWeight: 600 }}>{selectedLog.customer?.name ?? selectedLog.pointName}</div>
+                  {selectedLog.customer?.area && (
+                    <div className="text-sm text-muted">{selectedLog.customer.area}</div>
+                  )}
+                </div>
+              )}
+              {selectedLog.cansDelivered !== undefined && (
+                <div>
+                  <div className="text-sm text-muted">Cans Delivered</div>
+                  <div style={{ fontWeight: 700, fontSize: "1.1rem" }}>{selectedLog.cansDelivered}</div>
+                </div>
+              )}
+              {selectedLog.cansTakenBack !== undefined && (
+                <div>
+                  <div className="text-sm text-muted">Cans Taken Back</div>
+                  <div style={{ fontWeight: 700, fontSize: "1.1rem" }}>{selectedLog.cansTakenBack}</div>
                 </div>
               )}
               {(selectedLog.vehicle?.name || selectedLog.vehicle?.vehicleNumber || selectedLog.vehicle?.capacity) && (
@@ -1056,7 +1143,7 @@ export default function SuppliesPage() {
                   setSelectedLog(null);
                 }}
               >
-                {selectedLog.logType === "cash" ? "Edit Cash Credit" : "Edit Amount / Remark"}
+                {selectedLog.logType === "cash" ? "Edit Cash Credit" : "Edit Delivery"}
               </button>
             </div>
           </div>
@@ -1126,24 +1213,64 @@ export default function SuppliesPage() {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between" style={{ marginBottom: "1rem" }}>
-              <h3>{editingLog.logType === "cash" ? "Edit Cash Credit" : "Edit Amount"}</h3>
+              <h3>{editingLog.logType === "cash" ? "Edit Cash Credit" : "Edit Delivery"}</h3>
               <button type="button" className="btn btn-sm btn-secondary" onClick={() => setEditingLog(null)}>
                 Close
               </button>
             </div>
 
-            <div className="form-group" style={{ marginBottom: "0.75rem" }}>
-              <label className="form-label" htmlFor="editAmount">Amount</label>
-              <input
-                id="editAmount"
-                className="form-input"
-                type="number"
-                min="0"
-                step="0.01"
-                value={editingAmount}
-                onChange={(e) => setEditingAmount(e.target.value)}
-              />
-            </div>
+            {editingLog.logType === "water" && (
+              <>
+                <div className="form-group" style={{ marginBottom: "0.75rem" }}>
+                  <label className="form-label" htmlFor="editCansDelivered">Cans Delivered</label>
+                  <input
+                    id="editCansDelivered"
+                    className="form-input"
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={editingCansDelivered}
+                    onChange={(e) => setEditingCansDelivered(e.target.value)}
+                  />
+                </div>
+                <div className="form-group" style={{ marginBottom: "0.75rem" }}>
+                  <label className="form-label" htmlFor="editCansTakenBack">Cans Taken Back</label>
+                  <input
+                    id="editCansTakenBack"
+                    className="form-input"
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={editingCansTakenBack}
+                    onChange={(e) => setEditingCansTakenBack(e.target.value)}
+                  />
+                </div>
+                <div className="form-group" style={{ marginBottom: "0.75rem" }}>
+                  <label className="form-label" htmlFor="editDriverNote">Driver Notes (Optional)</label>
+                  <input
+                    id="editDriverNote"
+                    className="form-input"
+                    value={editingDriverRemark}
+                    onChange={(e) => setEditingDriverRemark(e.target.value)}
+                  />
+                </div>
+              </>
+            )}
+
+            {editingLog.logType === "cash" && (
+              <div className="form-group" style={{ marginBottom: "0.75rem" }}>
+                <label className="form-label" htmlFor="editAmount">Amount</label>
+                <input
+                  id="editAmount"
+                  className="form-input"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={editingAmount}
+                  onChange={(e) => setEditingAmount(e.target.value)}
+                />
+              </div>
+            )}
 
             <div className="form-group" style={{ marginBottom: "0.75rem" }}>
               <label className="form-label" htmlFor="editRemark">Admin Remark (Optional)</label>
