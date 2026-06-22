@@ -498,3 +498,38 @@ tbody td {
     grid-template-columns: 1fr;
   }
 }
+
+/* ───── Driver Tab Bar ───── */
+.driver-tab-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  background: #eef2f7;
+  border-top: 1px solid #e2e8f0;
+  padding: 0.35rem;
+  padding-bottom: calc(0.35rem + env(safe-area-inset-bottom));
+  display: flex;
+  gap: 0.35rem;
+  box-sizing: border-box;
+}
+
+.driver-content {
+  padding-bottom: 80px;
+}
+
+@media (min-width: 768px) {
+  .driver-tab-bar {
+    position: static;
+    border-top: none;
+    border-radius: 14px;
+    margin-bottom: 1rem;
+    width: clamp(320px, 85vw, 1200px);
+    padding-bottom: 0.35rem;
+  }
+
+  .driver-content {
+    padding-bottom: 0;
+  }
+}

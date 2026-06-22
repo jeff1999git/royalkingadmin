@@ -536,18 +536,7 @@ export default function DriverDashboard() {
 
   return (
     <div>
-      <div
-        style={{
-          marginBottom: "1rem",
-          background: "#eef2f7",
-          borderRadius: "14px",
-          padding: "0.35rem",
-          display: "flex",
-          gap: "0.35rem",
-          width: "clamp(320px, 85vw, 1200px)",
-          boxSizing: "border-box",
-        }}
-      >
+      <div className="driver-tab-bar">
         <div style={{ display: "flex", minWidth: 0, width: "100%", gap: "0.35rem" }}>
           <button
             type="button"
@@ -603,6 +592,7 @@ export default function DriverDashboard() {
         </div>
       </div>
 
+      <div className="driver-content">
       {activeTab === "delivery" ? (
         <>
           <div className="card" style={{ marginBottom: "1.5rem" }}>
@@ -1080,6 +1070,7 @@ export default function DriverDashboard() {
           </form>
         </div>
       ) : null}
+      </div>
 
       {selectedLog && (
         <div
