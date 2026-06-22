@@ -205,11 +205,11 @@ function LineChart({
 
 function StatCard({ label, value, accent }: { label: string; value: number; accent: string }) {
   return (
-    <div className="card" style={{ padding: "1rem 1.25rem", borderTop: `3px solid ${accent}` }}>
-      <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.35rem", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+    <div className="card stat-card" style={{ borderTop: `3px solid ${accent}` }}>
+      <div className="stat-card-label" style={{ color: "var(--text-muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: "0.3rem" }}>
         {label}
       </div>
-      <div style={{ fontSize: "1.9rem", fontWeight: 800, color: "var(--text-primary)", lineHeight: 1 }}>
+      <div className="stat-card-value" style={{ fontWeight: 800, color: "var(--text-primary)", lineHeight: 1 }}>
         {value.toLocaleString("en-IN")}
       </div>
     </div>
@@ -640,8 +640,20 @@ export default function AnalyticsPage() {
 
       {error && <div className="alert alert-error" style={{ marginBottom: "1rem" }}>{error}</div>}
 
-      {/* Summary stat cards */}
-      <div className="grid-3" style={{ marginBottom: "1.25rem" }}>
+      {/* Summary stat cards — always 3 columns, responsive sizing via style tag */}
+      <style dangerouslySetInnerHTML={{ __html: `
+        .stat-cards-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.6rem; margin-bottom: 1.25rem; }
+        .stat-card { padding: 0.85rem 1rem; }
+        .stat-card-label { font-size: 0.72rem; }
+        .stat-card-value { font-size: 1.75rem; }
+        @media (max-width: 400px) {
+          .stat-cards-row { gap: 0.4rem; }
+          .stat-card { padding: 0.65rem 0.6rem; }
+          .stat-card-label { font-size: 0.6rem; }
+          .stat-card-value { font-size: 1.4rem; }
+        }
+      ` }} />
+      <div className="stat-cards-row">
         <StatCard label="Total Deliveries" value={totals.deliveries} accent="var(--accent-primary)" />
         <StatCard label="Total Cans Delivered" value={totals.cans} accent="#0ea5e9" />
         <StatCard label="New Customers" value={totals.customers} accent="#8b5cf6" />
