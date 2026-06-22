@@ -6,6 +6,7 @@ import { deleteImageFromCloudinary } from "../../../../../lib/cloudinary";
 import { connectToDatabase } from "../../../../../lib/mongodb";
 import SupplyLog from "../../../../../models/SupplyLog";
 import Vehicle from "../../../../../models/Vehicle";
+import Customer from "../../../../../models/Customer";
 
 export async function PATCH(
   req: NextRequest,
@@ -28,6 +29,7 @@ export async function PATCH(
     suppliedAt?: string;
     vehicleId?: string;
     cansDelivered?: number | string;
+    cansTakenBack?: number | string;
     cashType?: "debit" | "fuel";
   };
   const amountValue =
@@ -43,6 +45,10 @@ export async function PATCH(
     body.cansDelivered === undefined || body.cansDelivered === ""
       ? undefined
       : Number(body.cansDelivered);
+  const cansTakenBack =
+    body.cansTakenBack === undefined || body.cansTakenBack === ""
+      ? undefined
+      : Number(body.cansTakenBack);
 
   if (amountValue !== undefined && (!Number.isFinite(amountValue) || amountValue < 0)) {
     return NextResponse.json({ error: "Amount must be a valid non-negative number." }, { status: 400 });
@@ -56,8 +62,11 @@ export async function PATCH(
   if (cashType !== undefined && cashType !== "debit" && cashType !== "fuel") {
     return NextResponse.json({ error: "Invalid cash type." }, { status: 400 });
   }
-  if (cansDelivered !== undefined && (!Number.isInteger(cansDelivered) || cansDelivered < 1)) {
-    return NextResponse.json({ error: "Cans delivered must be a positive integer." }, { status: 400 });
+  if (cansDelivered !== undefined && (!Number.isInteger(cansDelivered) || cansDelivered < 0)) {
+    return NextResponse.json({ error: "Cans delivered must be a non-negative integer." }, { status: 400 });
+  }
+  if (cansTakenBack !== undefined && (!Number.isInteger(cansTakenBack) || cansTakenBack < 0)) {
+    return NextResponse.json({ error: "Cans taken back must be a non-negative integer." }, { status: 400 });
   }
 
   await connectToDatabase();
@@ -76,6 +85,7 @@ export async function PATCH(
     suppliedAt?: Date;
     vehicle?: Types.ObjectId;
     cansDelivered?: number;
+    cansTakenBack?: number;
     cashType?: "debit" | "fuel";
   } = {};
   if (amountValue !== undefined) setPayload.amount = amountValue;
@@ -85,7 +95,18 @@ export async function PATCH(
   if (vehicleId !== undefined && vehicleId !== "") {
     setPayload.vehicle = new Types.ObjectId(vehicleId);
   }
-  if (cansDelivered !== undefined) setPayload.cansDelivered = cansDelivered;
+  if (cansDelivered !== undefined) {
+    setPayload.cansDelivered = cansDelivered;
+    // Recalculate amount based on updated cansDelivered × customer's cashPerCan
+    const existingLog = await SupplyLog.findById(id).lean();
+    if (existingLog?.logType === "water" && existingLog.customer) {
+      const customer = await Customer.findById(existingLog.customer).lean();
+      if (customer?.cashPerCan !== undefined) {
+        setPayload.amount = cansDelivered * customer.cashPerCan;
+      }
+    }
+  }
+  if (cansTakenBack !== undefined) setPayload.cansTakenBack = cansTakenBack;
   if (cashType !== undefined) setPayload.cashType = cashType;
 
   if (Object.keys(setPayload).length === 0) {

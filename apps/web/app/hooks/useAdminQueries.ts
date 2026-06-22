@@ -212,7 +212,6 @@ export function useAdminAddedSupplies(filters: {
     staleTime: 1000 * 30,
     queryFn: async () => {
       const params = new URLSearchParams();
-      params.set("amountStatus", "added");
       params.set("logType", "water");
       if (filters.date) params.set("date", filters.date);
       if (filters.month) params.set("month", filters.month);

@@ -8,13 +8,12 @@ import { type ReactNode } from "react";
 const navItems = [
     {
         href: "/admin/amounts",
-        label: "Amounts",
+        label: "Analytics",
         icon: (
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                <circle cx="12" cy="12" r="9" />
-                <path d="M12 7v10" />
-                <path d="M9 10h6" />
-                <path d="M9 14h6" />
+                <rect x="2" y="12" width="4" height="9" rx="1" />
+                <rect x="9" y="7" width="4" height="14" rx="1" />
+                <rect x="16" y="3" width="4" height="18" rx="1" />
             </svg>
         ),
     },

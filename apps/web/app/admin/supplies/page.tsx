@@ -144,6 +144,8 @@ export default function SuppliesPage() {
   const [editingRemark, setEditingRemark] = useState("");
   const [editingCashType, setEditingCashType] = useState<"debit" | "fuel">("debit");
   const [editingDriverRemark, setEditingDriverRemark] = useState("");
+  const [editingCansDelivered, setEditingCansDelivered] = useState("");
+  const [editingCansTakenBack, setEditingCansTakenBack] = useState("");
   const [editSaving, setEditSaving] = useState(false);
   const [deleteSaving, setDeleteSaving] = useState(false);
 
@@ -557,12 +559,14 @@ export default function SuppliesPage() {
     setEditingRemark(log.adminRemark ?? "");
     setEditingCashType(log.cashType === "fuel" ? "fuel" : "debit");
     setEditingDriverRemark(log.notes ?? "");
+    setEditingCansDelivered(log.cansDelivered !== undefined ? String(log.cansDelivered) : "");
+    setEditingCansTakenBack(log.cansTakenBack !== undefined ? String(log.cansTakenBack) : "");
     setError("");
   }
 
   async function saveEdit() {
     if (!editingLog) return;
-    if (!editingAmount || Number(editingAmount) < 0) {
+    if (editingLog.logType === "cash" && (!editingAmount || Number(editingAmount) < 0)) {
       setError("Please enter a valid amount.");
       return;
     }
@@ -571,16 +575,21 @@ export default function SuppliesPage() {
     const res = await fetch(`/api/admin/supplies/${editingLog._id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        amount: Number(editingAmount),
-        adminRemark: editingRemark,
-        ...(editingLog.logType === "cash"
+      body: JSON.stringify(
+        editingLog.logType === "cash"
           ? {
+              amount: Number(editingAmount),
+              adminRemark: editingRemark,
               cashType: editingCashType,
               notes: editingDriverRemark,
             }
-          : {}),
-      }),
+          : {
+              cansDelivered: editingCansDelivered !== "" ? Number(editingCansDelivered) : undefined,
+              cansTakenBack: editingCansTakenBack !== "" ? Number(editingCansTakenBack) : undefined,
+              notes: editingDriverRemark,
+              adminRemark: editingRemark,
+            }
+      ),
     });
     setEditSaving(false);
 
@@ -1134,7 +1143,7 @@ export default function SuppliesPage() {
                   setSelectedLog(null);
                 }}
               >
-                {selectedLog.logType === "cash" ? "Edit Cash Credit" : "Edit Amount / Remark"}
+                {selectedLog.logType === "cash" ? "Edit Cash Credit" : "Edit Delivery"}
               </button>
             </div>
           </div>
@@ -1204,24 +1213,64 @@ export default function SuppliesPage() {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between" style={{ marginBottom: "1rem" }}>
-              <h3>{editingLog.logType === "cash" ? "Edit Cash Credit" : "Edit Amount"}</h3>
+              <h3>{editingLog.logType === "cash" ? "Edit Cash Credit" : "Edit Delivery"}</h3>
               <button type="button" className="btn btn-sm btn-secondary" onClick={() => setEditingLog(null)}>
                 Close
               </button>
             </div>
 
-            <div className="form-group" style={{ marginBottom: "0.75rem" }}>
-              <label className="form-label" htmlFor="editAmount">Amount</label>
-              <input
-                id="editAmount"
-                className="form-input"
-                type="number"
-                min="0"
-                step="0.01"
-                value={editingAmount}
-                onChange={(e) => setEditingAmount(e.target.value)}
-              />
-            </div>
+            {editingLog.logType === "water" && (
+              <>
+                <div className="form-group" style={{ marginBottom: "0.75rem" }}>
+                  <label className="form-label" htmlFor="editCansDelivered">Cans Delivered</label>
+                  <input
+                    id="editCansDelivered"
+                    className="form-input"
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={editingCansDelivered}
+                    onChange={(e) => setEditingCansDelivered(e.target.value)}
+                  />
+                </div>
+                <div className="form-group" style={{ marginBottom: "0.75rem" }}>
+                  <label className="form-label" htmlFor="editCansTakenBack">Cans Taken Back</label>
+                  <input
+                    id="editCansTakenBack"
+                    className="form-input"
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={editingCansTakenBack}
+                    onChange={(e) => setEditingCansTakenBack(e.target.value)}
+                  />
+                </div>
+                <div className="form-group" style={{ marginBottom: "0.75rem" }}>
+                  <label className="form-label" htmlFor="editDriverNote">Driver Notes (Optional)</label>
+                  <input
+                    id="editDriverNote"
+                    className="form-input"
+                    value={editingDriverRemark}
+                    onChange={(e) => setEditingDriverRemark(e.target.value)}
+                  />
+                </div>
+              </>
+            )}
+
+            {editingLog.logType === "cash" && (
+              <div className="form-group" style={{ marginBottom: "0.75rem" }}>
+                <label className="form-label" htmlFor="editAmount">Amount</label>
+                <input
+                  id="editAmount"
+                  className="form-input"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={editingAmount}
+                  onChange={(e) => setEditingAmount(e.target.value)}
+                />
+              </div>
+            )}
 
             <div className="form-group" style={{ marginBottom: "0.75rem" }}>
               <label className="form-label" htmlFor="editRemark">Admin Remark (Optional)</label>

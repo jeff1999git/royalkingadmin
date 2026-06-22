@@ -4,6 +4,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "../../../../lib/auth";
 import { connectToDatabase } from "../../../../lib/mongodb";
 import SupplyLog from "../../../../models/SupplyLog";
+import "../../../../models/Customer";
 
 function parseDateRange(dateText: string | null) {
   const target = dateText ? new Date(dateText) : new Date();

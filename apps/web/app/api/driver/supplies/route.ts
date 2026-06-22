@@ -126,10 +126,15 @@ export async function POST(req: NextRequest) {
 
   await connectToDatabase();
 
+  let calculatedAmount: number | undefined;
+
   if (logType === "water" && customerId) {
     const customer = await Customer.findOne({ _id: customerId, isActive: true }).lean();
     if (!customer) {
       return NextResponse.json({ error: "Customer not found or inactive." }, { status: 404 });
+    }
+    if (cansDelivered !== undefined && customer.cashPerCan !== undefined) {
+      calculatedAmount = cansDelivered * customer.cashPerCan;
     }
   }
 
@@ -165,6 +170,7 @@ export async function POST(req: NextRequest) {
       payload.cansDelivered = cansDelivered;
       if (cansTakenBack !== undefined) payload.cansTakenBack = cansTakenBack;
       if (vehicleId) payload.vehicle = vehicleId;
+      if (calculatedAmount !== undefined) payload.amount = calculatedAmount;
     } else {
       payload.amount = amountValue;
       payload.cashType = cashType;
