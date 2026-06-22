@@ -219,7 +219,7 @@ export default function DriverDashboard() {
   // Cash form
   const [cashForm, setCashForm] = useState({
     amount: "",
-    cashType: "debit" as "debit" | "fuel",
+    cashType: "fuel" as "debit" | "fuel",
     notes: "",
   });
   const [cashBillFile, setCashBillFile] = useState<File | null>(null);
@@ -527,7 +527,7 @@ export default function DriverDashboard() {
     }
 
     setSuccess("Cash credit logged successfully.");
-    setCashForm({ amount: "", cashType: "debit", notes: "" });
+    setCashForm({ amount: "", cashType: "fuel", notes: "" });
     clearCashBillSelection();
     await queryClient.invalidateQueries({ queryKey: ["driver", "supplies"] });
   }
