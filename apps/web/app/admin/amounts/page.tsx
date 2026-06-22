@@ -6,10 +6,17 @@ import { useAdminPendingSupplies, useAdminQueryClient, useAdminVehicles } from "
 interface SupplyLog {
   _id: string;
   suppliedAt: string;
-  pointName: string;
+  pointName?: string;
+  cansDelivered?: number;
   notes?: string;
   amount?: number;
   adminRemark?: string;
+  customer?: {
+    _id: string;
+    name: string;
+    phone?: string;
+    area?: string;
+  };
   driver?: {
     _id: string;
     name: string;
@@ -59,9 +66,9 @@ export default function AmountsPage() {
   const [error, setError] = useState("");
   const [page, setPage] = useState(1);
   const [selectedLog, setSelectedLog] = useState<SupplyLog | null>(null);
-  const [modalPointName, setModalPointName] = useState("");
   const [modalSuppliedAt, setModalSuppliedAt] = useState("");
   const [modalVehicleId, setModalVehicleId] = useState("");
+  const [modalCansDelivered, setModalCansDelivered] = useState("");
   const [modalNotes, setModalNotes] = useState("");
   const [modalAmount, setModalAmount] = useState("");
   const [modalRemark, setModalRemark] = useState("");
@@ -105,9 +112,9 @@ export default function AmountsPage() {
 
   function openAddModal(log: SupplyLog) {
     setSelectedLog(log);
-    setModalPointName(log.pointName ?? "");
     setModalSuppliedAt(toDateTimeLocalInput(log.suppliedAt));
     setModalVehicleId(log.vehicle?._id ?? "");
+    setModalCansDelivered(log.cansDelivered !== undefined ? String(log.cansDelivered) : "");
     setModalNotes(log.notes ?? "");
     setModalAmount("");
     setModalRemark("");
@@ -127,9 +134,9 @@ export default function AmountsPage() {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        pointName: modalPointName,
         suppliedAt: modalSuppliedAt,
         vehicleId: modalVehicleId,
+        cansDelivered: modalCansDelivered ? Number(modalCansDelivered) : undefined,
         notes: modalNotes,
         amount: Number(amountText),
         adminRemark: modalRemark,
@@ -207,7 +214,8 @@ export default function AmountsPage() {
                     <tr>
                       <th>Action</th>
                       <th>S.No</th>
-                      <th>Point</th>
+                      <th>Customer</th>
+                      <th>Cans</th>
                       <th>Driver</th>
                     </tr>
                   </thead>
@@ -224,7 +232,11 @@ export default function AmountsPage() {
                           </button>
                         </td>
                         <td>{log.serialNo}</td>
-                        <td>{log.pointName}</td>
+                        <td>
+                          <div style={{ fontWeight: 600 }}>{log.customer?.name ?? log.pointName ?? "-"}</div>
+                          {log.customer?.area && <div className="text-sm text-muted">{log.customer.area}</div>}
+                        </td>
+                        <td style={{ fontWeight: 700 }}>{log.cansDelivered ?? "-"}</td>
                         <td>
                           <div style={{ fontWeight: 600 }}>{log.driver?.name}</div>
                         </td>
@@ -302,11 +314,24 @@ export default function AmountsPage() {
                 </div>
               </div>
               <div>
-                <div className="text-sm text-muted">Supply Point</div>
+                <div className="text-sm text-muted">Customer</div>
+                <div style={{ fontWeight: 600 }}>
+                  {selectedLog.customer?.name ?? selectedLog.pointName ?? "-"}
+                  {selectedLog.customer?.area && (
+                    <span className="text-sm text-muted" style={{ marginLeft: "0.5rem" }}>({selectedLog.customer.area})</span>
+                  )}
+                </div>
+              </div>
+              <div>
+                <div className="text-sm text-muted">Cans Delivered</div>
                 <input
                   className="form-input"
-                  value={modalPointName}
-                  onChange={(e) => setModalPointName(e.target.value)}
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={modalCansDelivered}
+                  onChange={(e) => setModalCansDelivered(e.target.value)}
+                  placeholder="Number of cans"
                 />
               </div>
               <div>

@@ -112,6 +112,7 @@ export async function GET(req: NextRequest) {
   const baseQuery = SupplyLog.find(query)
     .populate("driver", "name username phone")
     .populate("vehicle", "name vehicleNumber capacity")
+    .populate("customer", "name phone area")
     .sort({ suppliedAt: -1 });
 
   const logs = hasPagination

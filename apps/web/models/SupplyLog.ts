@@ -3,7 +3,9 @@ import { model, models, Schema, type Model, type Types } from "mongoose";
 export interface SupplyLogDocument {
   driver: Types.ObjectId;
   vehicle?: Types.ObjectId;
+  customer?: Types.ObjectId;
   pointName?: string;
+  cansDelivered?: number;
   suppliedAt: Date;
   notes?: string;
   amount?: number;
@@ -26,16 +28,13 @@ const SupplyLogSchema = new Schema<SupplyLogDocument>(
     vehicle: {
       type: Schema.Types.ObjectId,
       ref: "Vehicle",
-      required: function requiredVehicle(this: SupplyLogDocument) {
-        return this.logType === "water";
-      },
     },
-    pointName: {
-      type: String,
-      required: function requiredPointName(this: SupplyLogDocument) {
-        return this.logType === "water";
-      },
+    customer: {
+      type: Schema.Types.ObjectId,
+      ref: "Customer",
     },
+    pointName: { type: String },
+    cansDelivered: { type: Number },
     suppliedAt: { type: Date, required: true },
     notes: { type: String },
     amount: { type: Number },
@@ -59,6 +58,7 @@ const SupplyLogSchema = new Schema<SupplyLogDocument>(
 SupplyLogSchema.index({ driver: 1, suppliedAt: -1 });
 SupplyLogSchema.index({ suppliedAt: -1 });
 SupplyLogSchema.index({ logType: 1, suppliedAt: -1 });
+SupplyLogSchema.index({ customer: 1, suppliedAt: -1 });
 
 const SupplyLog =
   (models.SupplyLog as Model<SupplyLogDocument>) ||

@@ -5,6 +5,7 @@ import { connectToDatabase } from "../../../../lib/mongodb";
 import User from "../../../../models/User";
 import Vehicle from "../../../../models/Vehicle";
 import SupplyLog from "../../../../models/SupplyLog";
+import Customer from "../../../../models/Customer";
 
 export async function GET(req: NextRequest) {
     const session = await getServerSession(authOptions);
@@ -21,11 +22,12 @@ export async function GET(req: NextRequest) {
 
     await connectToDatabase();
 
-    const [drivers, vehicles, todaySupplies] = await Promise.all([
+    const [drivers, vehicles, todayDeliveries, customers] = await Promise.all([
         User.countDocuments({ role: "driver", isActive: true }),
         Vehicle.countDocuments({ isActive: true }),
         SupplyLog.countDocuments({ logType: "water", suppliedAt: { $gte: start, $lte: end } }),
+        Customer.countDocuments({ isActive: true }),
     ]);
 
-    return NextResponse.json({ drivers, vehicles, todaySupplies });
+    return NextResponse.json({ drivers, vehicles, todayDeliveries, customers });
 }

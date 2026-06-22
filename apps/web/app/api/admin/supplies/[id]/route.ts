@@ -24,10 +24,10 @@ export async function PATCH(
   const body = (await req.json()) as {
     amount?: number | string;
     adminRemark?: string;
-    pointName?: string;
     notes?: string;
     suppliedAt?: string;
     vehicleId?: string;
+    cansDelivered?: number | string;
     cashType?: "debit" | "fuel";
   };
   const amountValue =
@@ -35,17 +35,17 @@ export async function PATCH(
       ? undefined
       : Number(body.amount);
   const adminRemark = body.adminRemark?.trim();
-  const pointName = body.pointName?.trim();
   const notes = body.notes?.trim();
   const suppliedAt = body.suppliedAt ? new Date(body.suppliedAt) : undefined;
   const vehicleId = body.vehicleId?.trim();
   const cashType = body.cashType;
+  const cansDelivered =
+    body.cansDelivered === undefined || body.cansDelivered === ""
+      ? undefined
+      : Number(body.cansDelivered);
 
   if (amountValue !== undefined && (!Number.isFinite(amountValue) || amountValue < 0)) {
     return NextResponse.json({ error: "Amount must be a valid non-negative number." }, { status: 400 });
-  }
-  if (body.pointName !== undefined && !pointName) {
-    return NextResponse.json({ error: "Point name cannot be empty." }, { status: 400 });
   }
   if (body.suppliedAt !== undefined && (!suppliedAt || Number.isNaN(suppliedAt.getTime()))) {
     return NextResponse.json({ error: "Invalid date/time." }, { status: 400 });
@@ -55,6 +55,9 @@ export async function PATCH(
   }
   if (cashType !== undefined && cashType !== "debit" && cashType !== "fuel") {
     return NextResponse.json({ error: "Invalid cash type." }, { status: 400 });
+  }
+  if (cansDelivered !== undefined && (!Number.isInteger(cansDelivered) || cansDelivered < 1)) {
+    return NextResponse.json({ error: "Cans delivered must be a positive integer." }, { status: 400 });
   }
 
   await connectToDatabase();
@@ -69,33 +72,21 @@ export async function PATCH(
   const setPayload: {
     amount?: number;
     adminRemark?: string;
-    pointName?: string;
     notes?: string;
     suppliedAt?: Date;
     vehicle?: Types.ObjectId;
+    cansDelivered?: number;
     cashType?: "debit" | "fuel";
   } = {};
-  if (amountValue !== undefined) {
-    setPayload.amount = amountValue;
-  }
-  if (adminRemark !== undefined) {
-    setPayload.adminRemark = adminRemark;
-  }
-  if (pointName !== undefined) {
-    setPayload.pointName = pointName;
-  }
-  if (body.notes !== undefined) {
-    setPayload.notes = notes;
-  }
-  if (suppliedAt !== undefined) {
-    setPayload.suppliedAt = suppliedAt;
-  }
+  if (amountValue !== undefined) setPayload.amount = amountValue;
+  if (adminRemark !== undefined) setPayload.adminRemark = adminRemark;
+  if (body.notes !== undefined) setPayload.notes = notes;
+  if (suppliedAt !== undefined) setPayload.suppliedAt = suppliedAt;
   if (vehicleId !== undefined && vehicleId !== "") {
     setPayload.vehicle = new Types.ObjectId(vehicleId);
   }
-  if (cashType !== undefined) {
-    setPayload.cashType = cashType;
-  }
+  if (cansDelivered !== undefined) setPayload.cansDelivered = cansDelivered;
+  if (cashType !== undefined) setPayload.cashType = cashType;
 
   if (Object.keys(setPayload).length === 0) {
     return NextResponse.json({ error: "Nothing to update." }, { status: 400 });
@@ -113,6 +104,7 @@ export async function PATCH(
   const updated = await SupplyLog.findById(id)
     .populate("driver", "name username phone")
     .populate("vehicle", "name vehicleNumber capacity")
+    .populate("customer", "name phone area")
     .lean();
 
   if (!updated) {

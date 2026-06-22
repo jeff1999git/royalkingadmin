@@ -20,6 +20,7 @@ interface SupplyLog {
   suppliedAt: string;
   formattedSuppliedAt?: string;
   pointName?: string;
+  cansDelivered?: number;
   notes?: string;
   amount?: number;
   logType?: "water" | "cash";
@@ -27,6 +28,12 @@ interface SupplyLog {
   adminRemark?: string;
   billImageUrl?: string;
   billImagePublicId?: string;
+  customer?: {
+    _id: string;
+    name: string;
+    phone?: string;
+    area?: string;
+  };
   driver?: {
     _id: string;
     name: string;
@@ -45,7 +52,8 @@ type ExportRow = {
   no: number;
   dateTime: string;
   driver: string;
-  point?: string;
+  customer?: string;
+  cans?: string;
   vehicle?: string;
   amount: string;
   cashType?: string;
@@ -246,14 +254,19 @@ export default function SuppliesPage() {
       (sum, log) => sum + (log.amount ?? 0),
       0,
     );
+    const totalCans = effectiveLogs.reduce(
+      (sum, log) => sum + (log.cansDelivered ?? 0),
+      0,
+    );
     return {
       total: effectiveLogs.length,
       uniqueDrivers: new Set(
         effectiveLogs.map((l) => l.driver?._id ?? ""),
       ).size,
-      uniqueVehicles: new Set(
-        effectiveLogs.map((l) => l.vehicle?._id ?? ""),
+      uniqueCustomers: new Set(
+        effectiveLogs.map((l) => l.customer?._id ?? l.pointName ?? ""),
       ).size,
+      totalCans,
       totalAmount,
     };
   }, [effectiveLogs]);
@@ -268,7 +281,8 @@ export default function SuppliesPage() {
       no: index + 1,
       dateTime: formatDateTime(log.suppliedAt),
       driver: `${log.driver?.name ?? ""} (@${log.driver?.username ?? ""})`,
-      point: log.pointName ?? "-",
+      customer: log.customer?.name ?? log.pointName ?? "-",
+      cans: log.cansDelivered !== undefined ? String(log.cansDelivered) : "-",
       vehicle: `${log.vehicle?.name ?? ""} - ${log.vehicle?.vehicleNumber ?? ""}`,
       amount: log.amount !== undefined ? String(log.amount) : "-",
       cashType: log.cashType ?? "-",
@@ -313,8 +327,8 @@ export default function SuppliesPage() {
           <th>No.</th>
           <th>Date & Time</th>
           <th>Driver</th>
-          <th>Point</th>
-          <th>Vehicle</th>
+          <th>Customer</th>
+          <th>Cans</th>
           <th>Amount</th>
           <th>Admin Remark</th>
         </tr>`;
@@ -324,8 +338,8 @@ export default function SuppliesPage() {
           <td>${r.no}</td>
           <td>${r.dateTime}</td>
           <td>${r.driver}</td>
-          <td>${isCashTab ? r.cashType : r.point}</td>
-          <td>${isCashTab ? r.amount : r.vehicle}</td>
+          <td>${isCashTab ? r.cashType : r.customer}</td>
+          <td>${isCashTab ? r.amount : r.cans}</td>
           <td>${isCashTab ? r.note : r.amount}</td>
           <td>${r.remark}</td>
         </tr>`
@@ -388,8 +402,8 @@ export default function SuppliesPage() {
           { key: "no", title: "No.", width: 60 },
           { key: "dateTime", title: "Date & Time", width: 200 },
           { key: "driver", title: "Driver", width: 260 },
-          { key: "point", title: "Point", width: 280 },
-          { key: "vehicle", title: "Vehicle", width: 260 },
+          { key: "customer", title: "Customer", width: 260 },
+          { key: "cans", title: "Cans", width: 80 },
           { key: "amount", title: "Amount", width: 120 },
           { key: "remark", title: "Admin Remark", width: 280 },
         ];
@@ -606,7 +620,7 @@ export default function SuppliesPage() {
   return (
     <div>
       <div style={{ marginBottom: "1rem" }}>
-          <h1>Supply</h1>
+          <h1>Deliveries</h1>
           <div
             style={{
               marginTop: "0.75rem",
@@ -638,7 +652,7 @@ export default function SuppliesPage() {
                   flex: 1,
                 }}
               >
-                Water supplies
+                Deliveries
               </button>
               <button
                 type="button"
@@ -748,7 +762,12 @@ export default function SuppliesPage() {
       >
         <span><strong style={{ color: "var(--text-primary)" }}>Total:</strong> {summary.total}</span>
         <span><strong style={{ color: "var(--text-primary)" }}>Drivers:</strong> {summary.uniqueDrivers}</span>
-        <span><strong style={{ color: "var(--text-primary)" }}>Vehicles:</strong> {summary.uniqueVehicles}</span>
+        {supplyTab === "water" && (
+          <>
+            <span><strong style={{ color: "var(--text-primary)" }}>Customers:</strong> {summary.uniqueCustomers}</span>
+            <span><strong style={{ color: "var(--text-primary)" }}>Cans:</strong> {summary.totalCans}</span>
+          </>
+        )}
         <span style={{ fontSize: "1.05rem", fontWeight: 800, color: "var(--text-primary)" }}>
           Total Amount: {summary.totalAmount.toLocaleString("en-IN")}
         </span>
@@ -778,8 +797,9 @@ export default function SuppliesPage() {
                   <thead>
                     <tr>
                       <th>S.No</th>
-                      {supplyTab === "water" ? <th>Point</th> : <th>Amount</th>}
-                      {supplyTab === "water" ? <th>Amount</th> : <th>Type</th>}
+                      {supplyTab === "water" ? <th>Customer</th> : <th>Amount</th>}
+                      {supplyTab === "water" ? <th>Cans</th> : <th>Type</th>}
+                      {supplyTab === "water" && <th>Amount</th>}
                       <th>Driver</th>
                     </tr>
                   </thead>
@@ -813,7 +833,7 @@ export default function SuppliesPage() {
                           style={{ cursor: "pointer" }}
                         >
                           {supplyTab === "water"
-                            ? maskText(log.pointName ?? "-")
+                            ? maskText(log.customer?.name ?? log.pointName ?? "-")
                             : (log.amount !== undefined ? log.amount : "-")}
                         </td>
                         <td
@@ -829,7 +849,7 @@ export default function SuppliesPage() {
                           style={{ cursor: "pointer" }}
                         >
                           {supplyTab === "water" ? (
-                            log.amount !== undefined ? log.amount : "-"
+                            <strong>{log.cansDelivered ?? "-"}</strong>
                           ) : log.cashType === "fuel" ? (
                             log.billImageUrl ? (
                               <button
@@ -852,6 +872,22 @@ export default function SuppliesPage() {
                             </span>
                           )}
                         </td>
+                        {supplyTab === "water" && (
+                          <td
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => setSelectedLog(log)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                setSelectedLog(log);
+                              }
+                            }}
+                            style={{ cursor: "pointer" }}
+                          >
+                            {log.amount !== undefined ? log.amount : "-"}
+                          </td>
+                        )}
                         <td
                           role="button"
                           tabIndex={0}
@@ -941,10 +977,19 @@ export default function SuppliesPage() {
                   <div style={{ fontWeight: 600 }}>{selectedLog.driver.name}</div>
                 </div>
               )}
-              {selectedLog.pointName && (
+              {(selectedLog.customer?.name || selectedLog.pointName) && (
                 <div>
-                  <div className="text-sm text-muted">Point</div>
-                  <div style={{ fontWeight: 600 }}>{selectedLog.pointName}</div>
+                  <div className="text-sm text-muted">Customer</div>
+                  <div style={{ fontWeight: 600 }}>{selectedLog.customer?.name ?? selectedLog.pointName}</div>
+                  {selectedLog.customer?.area && (
+                    <div className="text-sm text-muted">{selectedLog.customer.area}</div>
+                  )}
+                </div>
+              )}
+              {selectedLog.cansDelivered !== undefined && (
+                <div>
+                  <div className="text-sm text-muted">Cans Delivered</div>
+                  <div style={{ fontWeight: 700, fontSize: "1.1rem" }}>{selectedLog.cansDelivered}</div>
                 </div>
               )}
               {(selectedLog.vehicle?.name || selectedLog.vehicle?.vehicleNumber || selectedLog.vehicle?.capacity) && (
