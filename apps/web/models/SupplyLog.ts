@@ -6,6 +6,7 @@ export interface SupplyLogDocument {
   customer?: Types.ObjectId;
   pointName?: string;
   cansDelivered?: number;
+  cansTakenBack?: number;
   suppliedAt: Date;
   notes?: string;
   amount?: number;
@@ -35,6 +36,7 @@ const SupplyLogSchema = new Schema<SupplyLogDocument>(
     },
     pointName: { type: String },
     cansDelivered: { type: Number },
+    cansTakenBack: { type: Number, min: 0 },
     suppliedAt: { type: Date, required: true },
     notes: { type: String },
     amount: { type: Number },

@@ -36,6 +36,7 @@ interface DeliveryLog {
   formattedSuppliedAt?: string;
   pointName?: string;
   cansDelivered?: number;
+  cansTakenBack?: number;
   notes?: string;
   amount?: number;
   logType?: "water" | "cash";
@@ -209,6 +210,7 @@ export default function DriverDashboard() {
   const [deliveryForm, setDeliveryForm] = useState({
     deliveryKey: "",
     cansDelivered: "",
+    cansTakenBack: "",
     vehicleId: "",
     notes: "",
   });
@@ -497,6 +499,7 @@ export default function DriverDashboard() {
         logType: "water",
         customerId: selectedOpt.customerId,
         cansDelivered: Number(deliveryForm.cansDelivered),
+        cansTakenBack: deliveryForm.cansTakenBack !== "" ? Number(deliveryForm.cansTakenBack) : undefined,
         vehicleId: deliveryForm.vehicleId || undefined,
         notes: deliveryForm.notes,
       }),
@@ -512,7 +515,7 @@ export default function DriverDashboard() {
     }
 
     setSuccess("Delivery logged successfully.");
-    setDeliveryForm({ deliveryKey: "", cansDelivered: "", vehicleId: assignedVehicleId, notes: "" });
+    setDeliveryForm({ deliveryKey: "", cansDelivered: "", cansTakenBack: "", vehicleId: assignedVehicleId, notes: "" });
     setCustomerSearch("");
     await queryClient.invalidateQueries({ queryKey: ["driver", "supplies"] });
   }
@@ -752,6 +755,19 @@ export default function DriverDashboard() {
                   />
                 </div>
                 <div className="form-group">
+                  <label className="form-label" htmlFor="cansTakenBack">Cans Taken Back</label>
+                  <input
+                    id="cansTakenBack"
+                    className="form-input"
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={deliveryForm.cansTakenBack}
+                    onChange={(e) => setDeliveryForm((f) => ({ ...f, cansTakenBack: e.target.value }))}
+                    placeholder="e.g. 1"
+                  />
+                </div>
+                <div className="form-group">
                   <label className="form-label" htmlFor="vehicleId">Vehicle (Optional)</label>
                   <select
                     id="vehicleId"
@@ -869,6 +885,11 @@ export default function DriverDashboard() {
                           </div>
                           {log.customer?.area && (
                             <div style={{ fontSize: "0.82rem", color: "var(--text-secondary)" }}>{log.customer.area}</div>
+                          )}
+                          {log.cansTakenBack !== undefined && (
+                            <div style={{ fontSize: "0.82rem", color: "var(--text-secondary)" }}>
+                              Taken back: <strong>{log.cansTakenBack} can{log.cansTakenBack !== 1 ? "s" : ""}</strong>
+                            </div>
                           )}
                           {log.amount !== undefined && (
                             <div style={{ fontSize: "0.85rem", color: "var(--text-secondary)" }}>
@@ -1286,6 +1307,14 @@ export default function DriverDashboard() {
                     <div className="text-sm text-muted">Cans Delivered</div>
                     <div style={{ fontWeight: 700, fontSize: "1.15rem" }}>
                       {selectedLog.cansDelivered} can{selectedLog.cansDelivered !== 1 ? "s" : ""}
+                    </div>
+                  </div>
+                )}
+                {selectedLog.cansTakenBack !== undefined && (
+                  <div>
+                    <div className="text-sm text-muted">Cans Taken Back</div>
+                    <div style={{ fontWeight: 700, fontSize: "1.15rem" }}>
+                      {selectedLog.cansTakenBack} can{selectedLog.cansTakenBack !== 1 ? "s" : ""}
                     </div>
                   </div>
                 )}

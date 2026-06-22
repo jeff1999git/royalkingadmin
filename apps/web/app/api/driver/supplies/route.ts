@@ -11,6 +11,7 @@ type DriverSupplyRequestBody = {
   logType?: "water" | "cash";
   customerId?: string;
   cansDelivered?: number | string;
+  cansTakenBack?: number | string;
   vehicleId?: string;
   notes?: string;
   amount?: number | string;
@@ -29,6 +30,7 @@ async function parseDriverSupplyRequest(req: NextRequest): Promise<DriverSupplyR
       logType: typeof formData.get("logType") === "string" ? (formData.get("logType") as "water" | "cash") : undefined,
       customerId: typeof formData.get("customerId") === "string" ? formData.get("customerId") as string : undefined,
       cansDelivered: typeof formData.get("cansDelivered") === "string" ? formData.get("cansDelivered") as string : undefined,
+      cansTakenBack: typeof formData.get("cansTakenBack") === "string" ? formData.get("cansTakenBack") as string : undefined,
       vehicleId: typeof formData.get("vehicleId") === "string" ? formData.get("vehicleId") as string : undefined,
       notes: typeof formData.get("notes") === "string" ? formData.get("notes") as string : undefined,
       amount: typeof formData.get("amount") === "string" ? formData.get("amount") as string : undefined,
@@ -72,6 +74,10 @@ export async function POST(req: NextRequest) {
     body.cansDelivered === undefined || body.cansDelivered === ""
       ? undefined
       : Number(body.cansDelivered);
+  const cansTakenBack =
+    body.cansTakenBack === undefined || body.cansTakenBack === ""
+      ? undefined
+      : Number(body.cansTakenBack);
   const amountValue =
     body.amount === undefined || body.amount === null || body.amount === ""
       ? undefined
@@ -91,6 +97,9 @@ export async function POST(req: NextRequest) {
     }
     if (vehicleId && !Types.ObjectId.isValid(vehicleId)) {
       return NextResponse.json({ error: "Invalid vehicle." }, { status: 400 });
+    }
+    if (cansTakenBack !== undefined && (!Number.isInteger(cansTakenBack) || cansTakenBack < 0)) {
+      return NextResponse.json({ error: "Cans taken back must be a non-negative integer." }, { status: 400 });
     }
   }
 
@@ -136,6 +145,7 @@ export async function POST(req: NextRequest) {
       customer?: string;
       vehicle?: string;
       cansDelivered?: number;
+      cansTakenBack?: number;
       amount?: number;
       cashType?: "debit" | "fuel";
       billImageUrl?: string;
@@ -150,6 +160,7 @@ export async function POST(req: NextRequest) {
     if (logType === "water") {
       payload.customer = customerId;
       payload.cansDelivered = cansDelivered;
+      if (cansTakenBack !== undefined) payload.cansTakenBack = cansTakenBack;
       if (vehicleId) payload.vehicle = vehicleId;
     } else {
       payload.amount = amountValue;
