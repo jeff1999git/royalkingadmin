@@ -10,7 +10,7 @@ interface Customer {
   email?: string;
   address?: string;
   area?: string;
-  locationType?: "home" | "office";
+  locationType?: "home" | "office" | "both";
   subscriptionCans: number;
   cashPerCan?: number;
   isActive: boolean;
@@ -33,7 +33,7 @@ function useAdminCustomers() {
 }
 
 const locationTypeLabel = (lt?: string) =>
-  lt === "home" ? "Home" : lt === "office" ? "Office" : undefined;
+  lt === "home" ? "Home" : lt === "office" ? "Office" : lt === "both" ? "Both" : undefined;
 
 export default function CustomersPage() {
   const [showForm, setShowForm] = useState(false);
@@ -43,7 +43,7 @@ export default function CustomersPage() {
     email: "",
     address: "",
     area: "",
-    locationType: "home" as "home" | "office",
+    locationType: "home" as "home" | "office" | "both",
     subscriptionCans: "1",
     cashPerCan: "",
   });
@@ -58,7 +58,7 @@ export default function CustomersPage() {
     email: "",
     address: "",
     area: "",
-    locationType: "" as "home" | "office" | "",
+    locationType: "" as "home" | "office" | "both" | "",
     subscriptionCans: "1",
     cashPerCan: "",
     isActive: true,
@@ -286,8 +286,8 @@ export default function CustomersPage() {
                             <span style={{
                               fontSize: "0.75rem", fontWeight: 600, padding: "0.15rem 0.5rem",
                               borderRadius: "20px",
-                              background: customer.locationType === "home" ? "#e8f5e9" : "#e3f2fd",
-                              color: customer.locationType === "home" ? "#2e7d32" : "#1565c0",
+                              background: customer.locationType === "home" ? "#e8f5e9" : customer.locationType === "office" ? "#e3f2fd" : "#f3e8ff",
+                              color: customer.locationType === "home" ? "#2e7d32" : customer.locationType === "office" ? "#1565c0" : "#7e22ce",
                             }}>
                               {locationTypeLabel(customer.locationType)}
                             </span>
@@ -392,7 +392,7 @@ export default function CustomersPage() {
                 <div className="form-group" style={{ gridColumn: "1 / -1" }}>
                   <label className="form-label">Type *</label>
                   <div style={{ display: "flex", gap: "1.5rem", marginTop: "0.4rem" }}>
-                    {(["home", "office"] as const).map((lt) => (
+                    {(["home", "office", "both"] as const).map((lt) => (
                       <label key={lt} style={{ display: "flex", alignItems: "center", gap: "0.4rem", cursor: "pointer", fontWeight: formData.locationType === lt ? 700 : 500 }}>
                         <input
                           type="radio"
@@ -401,7 +401,7 @@ export default function CustomersPage() {
                           checked={formData.locationType === lt}
                           onChange={() => setFormData((f) => ({ ...f, locationType: lt }))}
                         />
-                        {lt === "home" ? "Home" : "Office"}
+                        {lt === "home" ? "Home" : lt === "office" ? "Office" : "Both"}
                       </label>
                     ))}
                   </div>
@@ -541,7 +541,7 @@ export default function CustomersPage() {
               <div className="form-group" style={{ gridColumn: "1 / -1" }}>
                 <label className="form-label">Type</label>
                 <div style={{ display: "flex", gap: "1.5rem", marginTop: "0.4rem" }}>
-                  {(["home", "office"] as const).map((lt) => (
+                  {(["home", "office", "both"] as const).map((lt) => (
                     <label key={lt} style={{ display: "flex", alignItems: "center", gap: "0.4rem", cursor: "pointer", fontWeight: editData.locationType === lt ? 700 : 500 }}>
                       <input
                         type="radio"
@@ -550,7 +550,7 @@ export default function CustomersPage() {
                         checked={editData.locationType === lt}
                         onChange={() => setEditData((d) => ({ ...d, locationType: lt }))}
                       />
-                      {lt === "home" ? "Home" : "Office"}
+                      {lt === "home" ? "Home" : lt === "office" ? "Office" : "Both"}
                     </label>
                   ))}
                 </div>

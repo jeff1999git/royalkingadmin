@@ -6,7 +6,7 @@ export interface CustomerDocument {
   email?: string;
   address?: string;
   area?: string;
-  locationType?: "home" | "office";
+  locationType?: "home" | "office" | "both";
   subscriptionCans: number;
   cashPerCan?: number;
   isActive: boolean;
@@ -22,7 +22,7 @@ const CustomerSchema = new Schema<CustomerDocument>(
     email: { type: String },
     address: { type: String },
     area: { type: String },
-    locationType: { type: String, enum: ["home", "office"] },
+    locationType: { type: String, enum: ["home", "office", "both"] },
     subscriptionCans: { type: Number, default: 1, min: 1 },
     cashPerCan: { type: Number, min: 0 },
     isActive: { type: Boolean, default: true },

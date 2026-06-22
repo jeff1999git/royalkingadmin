@@ -25,7 +25,7 @@ export async function PATCH(
     email?: string;
     address?: string;
     area?: string;
-    locationType?: "home" | "office" | "";
+    locationType?: "home" | "office" | "both" | "";
     subscriptionCans?: number | string;
     cashPerCan?: number | string | null;
     isActive?: boolean;
@@ -51,8 +51,8 @@ export async function PATCH(
   }
   if (body.area !== undefined) setPayload.area = body.area.trim() || undefined;
   if (body.locationType !== undefined) {
-    if (body.locationType && body.locationType !== "home" && body.locationType !== "office") {
-      return NextResponse.json({ error: "Location type must be home or office." }, { status: 400 });
+    if (body.locationType && body.locationType !== "home" && body.locationType !== "office" && body.locationType !== "both") {
+      return NextResponse.json({ error: "Location type must be home, office, or both." }, { status: 400 });
     }
     setPayload.locationType = body.locationType || undefined;
   }

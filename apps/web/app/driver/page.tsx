@@ -209,7 +209,7 @@ export default function DriverDashboard() {
     phone: "",
     email: "",
     location: "",
-    locationType: "home" as "home" | "office",
+    locationType: "home" as "home" | "office" | "both",
     cashPerCan: "",
   });
   const [registerError, setRegisterError] = useState("");
@@ -488,7 +488,7 @@ export default function DriverDashboard() {
     }
 
     setRegisterSuccess("Customer registered successfully.");
-    setRegisterForm({ name: "", phone: "", email: "", location: "", locationType: "home", cashPerCan: "" });
+    setRegisterForm({ name: "", phone: "", email: "", location: "", locationType: "home" as "home" | "office" | "both", cashPerCan: "" });
     await queryClient.invalidateQueries({ queryKey: ["driver", "customers"] });
   }
 
@@ -1020,7 +1020,7 @@ export default function DriverDashboard() {
               <div className="form-group" style={{ gridColumn: "1 / -1" }}>
                 <label className="form-label">Type *</label>
                 <div style={{ display: "flex", gap: "1.5rem", marginTop: "0.4rem" }}>
-                  {(["home", "office"] as const).map((lt) => (
+                  {(["home", "office", "both"] as const).map((lt) => (
                     <label key={lt} style={{ display: "flex", alignItems: "center", gap: "0.4rem", cursor: "pointer", fontWeight: registerForm.locationType === lt ? 700 : 500 }}>
                       <input
                         type="radio"
@@ -1029,7 +1029,7 @@ export default function DriverDashboard() {
                         checked={registerForm.locationType === lt}
                         onChange={() => setRegisterForm((f) => ({ ...f, locationType: lt }))}
                       />
-                      {lt === "home" ? "Home" : "Office"}
+                      {lt === "home" ? "Home" : lt === "office" ? "Office" : "Both"}
                     </label>
                   ))}
                 </div>

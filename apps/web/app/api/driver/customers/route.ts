@@ -30,7 +30,7 @@ export async function POST(req: NextRequest) {
     phone?: string;
     email?: string;
     address?: string;
-    locationType?: "home" | "office";
+    locationType?: "home" | "office" | "both";
     cashPerCan?: number | string;
   };
 
@@ -51,8 +51,8 @@ export async function POST(req: NextRequest) {
   if (isNaN(cashPerCan) || cashPerCan < 0) {
     return NextResponse.json({ error: "Cash per can must be a non-negative number." }, { status: 400 });
   }
-  if (locationType && locationType !== "home" && locationType !== "office") {
-    return NextResponse.json({ error: "Location type must be home or office." }, { status: 400 });
+  if (locationType && locationType !== "home" && locationType !== "office" && locationType !== "both") {
+    return NextResponse.json({ error: "Location type must be home, office, or both." }, { status: 400 });
   }
 
   await connectToDatabase();
