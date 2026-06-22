@@ -487,7 +487,7 @@ export default function DriverDashboard() {
       return;
     }
 
-    setRegisterSuccess("Customer registered! Admin will set their subscription amount.");
+    setRegisterSuccess("Customer registered successfully.");
     setRegisterForm({ name: "", phone: "", email: "", location: "", locationType: "home", cashPerCan: "" });
     await queryClient.invalidateQueries({ queryKey: ["driver", "customers"] });
   }
@@ -989,7 +989,7 @@ export default function DriverDashboard() {
         <div className="card" style={{ marginBottom: "1.5rem" }}>
           <h3 style={{ marginBottom: "0.25rem" }}>Register New Customer</h3>
           <p style={{ fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "1rem" }}>
-            Registered customers can be selected for deliveries. Admin will set their subscription cans.
+            Registered customers can be selected for deliveries.
           </p>
           <form onSubmit={(e) => void submitRegister(e)}>
             <div className="grid-2" style={{ marginBottom: "1rem" }}>
@@ -1055,8 +1055,8 @@ export default function DriverDashboard() {
                   required
                 />
               </div>
-              <div className="form-group" style={{ gridColumn: "1 / -1" }}>
-                <label className="form-label" htmlFor="regCashPerCan">Cash Per Can (₹)</label>
+              <div className="form-group">
+                <label className="form-label" htmlFor="regCashPerCan">Cash Per Can (₹) *</label>
                 <input
                   id="regCashPerCan"
                   className="form-input"
@@ -1066,6 +1066,7 @@ export default function DriverDashboard() {
                   value={registerForm.cashPerCan}
                   onChange={(e) => setRegisterForm((f) => ({ ...f, cashPerCan: e.target.value }))}
                   placeholder="e.g. 50"
+                  required
                 />
               </div>
             </div>

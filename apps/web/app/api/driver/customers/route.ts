@@ -39,12 +39,16 @@ export async function POST(req: NextRequest) {
   const email = body.email?.trim() || undefined;
   const address = body.address?.trim();
   const locationType = body.locationType;
-  const cashPerCan = body.cashPerCan !== undefined && body.cashPerCan !== "" ? Number(body.cashPerCan) : undefined;
+  const cashPerCanRaw = body.cashPerCan;
+  const cashPerCan = cashPerCanRaw !== undefined && cashPerCanRaw !== "" ? Number(cashPerCanRaw) : undefined;
 
   if (!name) return NextResponse.json({ error: "Name is required." }, { status: 400 });
   if (!phone) return NextResponse.json({ error: "Phone is required." }, { status: 400 });
   if (!address) return NextResponse.json({ error: "Location is required." }, { status: 400 });
-  if (cashPerCan !== undefined && (isNaN(cashPerCan) || cashPerCan < 0)) {
+  if (cashPerCan === undefined) {
+    return NextResponse.json({ error: "Cash per can is required." }, { status: 400 });
+  }
+  if (isNaN(cashPerCan) || cashPerCan < 0) {
     return NextResponse.json({ error: "Cash per can must be a non-negative number." }, { status: 400 });
   }
   if (locationType && locationType !== "home" && locationType !== "office") {
