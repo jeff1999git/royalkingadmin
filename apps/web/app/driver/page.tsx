@@ -553,7 +553,7 @@ export default function DriverDashboard() {
               flex: 1,
             }}
           >
-            Delivery
+            Supply
           </button>
           <button
             type="button"
@@ -587,7 +587,7 @@ export default function DriverDashboard() {
               flex: 1,
             }}
           >
-            Register
+            User
           </button>
         </div>
       </div>
