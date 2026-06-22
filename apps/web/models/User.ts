@@ -35,18 +35,8 @@ const UserSchema = new Schema<UserDocument>(
   { timestamps: true }
 );
 
-const ExistingUserModel = models.User as Model<UserDocument> | undefined;
-
-if (ExistingUserModel && !ExistingUserModel.schema.path("assignedVehicle")) {
-  ExistingUserModel.schema.add({
-    assignedVehicle: {
-      type: Schema.Types.ObjectId,
-      ref: "Vehicle",
-      default: null,
-    },
-  });
-}
-
-const User = ExistingUserModel || model<UserDocument>("User", UserSchema);
+const User =
+  (models.User as Model<UserDocument>) ||
+  model<UserDocument>("User", UserSchema);
 
 export default User;

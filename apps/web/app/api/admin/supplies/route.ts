@@ -104,33 +104,32 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Invalid logType value." }, { status: 400 });
   }
 
-  await connectToDatabase();
-  const hasPagination = Boolean(pageParam || limitParam);
-  const page = Math.max(1, Number.parseInt(pageParam ?? "1", 10) || 1);
-  const limit = Math.max(1, Math.min(100, Number.parseInt(limitParam ?? "10", 10) || 10));
-  const skip = (page - 1) * limit;
+  try {
+    await connectToDatabase();
+    const hasPagination = Boolean(pageParam || limitParam);
+    const page = Math.max(1, Number.parseInt(pageParam ?? "1", 10) || 1);
+    const limit = Math.max(1, Math.min(100, Number.parseInt(limitParam ?? "10", 10) || 10));
+    const skip = (page - 1) * limit;
 
-  const baseQuery = SupplyLog.find(query)
-    .populate("driver", "name username phone")
-    .populate("vehicle", "name vehicleNumber capacity")
-    .populate("customer", "name phone area")
-    .sort({ suppliedAt: -1 });
+    const baseQuery = SupplyLog.find(query)
+      .populate("driver", "name username phone")
+      .populate("vehicle", "name vehicleNumber capacity")
+      .populate("customer", "name phone area")
+      .sort({ suppliedAt: -1 });
 
-  const logs = hasPagination
-    ? await baseQuery.skip(skip).limit(limit).lean()
-    : await baseQuery.lean();
+    const logs = hasPagination
+      ? await baseQuery.skip(skip).limit(limit).lean()
+      : await baseQuery.lean();
 
-  if (hasPagination) {
-    const total = await SupplyLog.countDocuments(query);
-    const totalPages = Math.max(1, Math.ceil(total / limit));
-    return NextResponse.json({
-      logs,
-      total,
-      page,
-      limit,
-      totalPages,
-    });
+    if (hasPagination) {
+      const total = await SupplyLog.countDocuments(query);
+      const totalPages = Math.max(1, Math.ceil(total / limit));
+      return NextResponse.json({ logs, total, page, limit, totalPages });
+    }
+
+    return NextResponse.json(logs);
+  } catch (err) {
+    console.error("[supplies GET]", err);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
-
-  return NextResponse.json(logs);
 }

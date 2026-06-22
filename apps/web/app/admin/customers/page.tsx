@@ -163,10 +163,14 @@ export default function CustomersPage() {
     const confirmed = window.confirm(`Delete customer "${customer.name}"? This cannot be undone.`);
     if (!confirmed) return;
     setPageError("");
-    const res = await fetch(`/api/admin/customers/${customer._id}`, { method: "DELETE" });
-    if (!res.ok) { setPageError("Failed to delete customer."); return; }
-    setSelectedCustomer(null);
-    await queryClient.invalidateQueries({ queryKey: CUSTOMERS_KEY });
+    try {
+      const res = await fetch(`/api/admin/customers/${customer._id}`, { method: "DELETE" });
+      if (!res.ok) { setPageError("Failed to delete customer."); return; }
+      setSelectedCustomer(null);
+      await queryClient.invalidateQueries({ queryKey: CUSTOMERS_KEY });
+    } catch {
+      setPageError("Failed to delete customer. Please try again.");
+    }
   }
 
   const areas = Array.from(new Set((customers ?? []).map((c) => c.area).filter(Boolean) as string[])).sort();

@@ -23,5 +23,8 @@ const EntrySchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+EntrySchema.index({ driver: 1, date: -1 });
+EntrySchema.index({ date: -1 });
+
 export default mongoose.models.Entry ||
   mongoose.model("Entry", EntrySchema);

@@ -26,6 +26,7 @@ export async function GET(req: NextRequest) {
   const driverIdParam = sp.get("driverId");
   const vehicleIdParam = sp.get("vehicleId");
 
+  try {
   await connectToDatabase();
 
   let start: Date;
@@ -125,4 +126,8 @@ export async function GET(req: NextRequest) {
   }));
 
   return NextResponse.json({ deliveries, registrations });
+  } catch (err) {
+    console.error("[analytics GET]", err);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
 }
