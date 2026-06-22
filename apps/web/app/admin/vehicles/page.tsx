@@ -28,6 +28,7 @@ export default function VehiclesPage() {
   });
   const [editError, setEditError] = useState("");
   const [editSaving, setEditSaving] = useState(false);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
 
   const { data: vehicles, isLoading: isVehiclesLoading } = useAdminVehicles();
   const queryClient = useAdminQueryClient();
@@ -49,36 +50,49 @@ export default function VehiclesPage() {
     setFormError("");
     setFormSuccess("");
     setSubmitting(true);
-
-    const res = await fetch("/api/admin/vehicles", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(formData),
-    });
-    const data = await safeParseJson(res);
-    setSubmitting(false);
-
-    if (!res.ok) {
-      setFormError(data.error ?? "Failed to add vehicle.");
-      return;
+    try {
+      const res = await fetch("/api/admin/vehicles", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(formData),
+      });
+      const data = await safeParseJson(res);
+      setSubmitting(false);
+      if (!res.ok) {
+        setFormError(data.error ?? "Failed to add vehicle.");
+        return;
+      }
+      setFormSuccess("Vehicle added successfully.");
+      setFormData({ name: "", vehicleNumber: "", capacity: "" });
+      await queryClient.invalidateQueries({ queryKey: ["admin", "vehicles"] });
+      setTimeout(() => { setShowForm(false); setFormSuccess(""); }, 1200);
+    } catch {
+      setSubmitting(false);
+      setFormError("Failed to add vehicle. Please try again.");
     }
-
-    setFormSuccess("Vehicle added successfully.");
-    setFormData({ name: "", vehicleNumber: "", capacity: "" });
-    await queryClient.invalidateQueries({ queryKey: ["admin", "vehicles"] });
-    setTimeout(() => {
-      setShowForm(false);
-      setFormSuccess("");
-    }, 1200);
   }
 
-  async function toggleVehicle(vehicle: Vehicle) {
-    await fetch(`/api/admin/vehicles/${vehicle._id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ isActive: !vehicle.isActive }),
-    });
-    await queryClient.invalidateQueries({ queryKey: ["admin", "vehicles"] });
+  async function toggleVehicle(vehicle: Vehicle): Promise<boolean> {
+    setTogglingId(vehicle._id);
+    try {
+      const res = await fetch(`/api/admin/vehicles/${vehicle._id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isActive: !vehicle.isActive }),
+      });
+      if (!res.ok) {
+        const data = await safeParseJson(res);
+        setFormError(data.error ?? "Failed to update vehicle status.");
+        return false;
+      }
+      await queryClient.invalidateQueries({ queryKey: ["admin", "vehicles"] });
+      return true;
+    } catch {
+      setFormError("Failed to update vehicle status. Please try again.");
+      return false;
+    } finally {
+      setTogglingId(null);
+    }
   }
 
   function openEdit(vehicle: Vehicle) {
@@ -96,21 +110,24 @@ export default function VehiclesPage() {
     if (!editingVehicle) return;
     setEditSaving(true);
     setEditError("");
-    const res = await fetch(`/api/admin/vehicles/${editingVehicle._id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(editData),
-    });
-    const data = await safeParseJson(res);
-    setEditSaving(false);
-
-    if (!res.ok) {
-      setEditError(data.error ?? "Failed to update vehicle.");
-      return;
+    try {
+      const res = await fetch(`/api/admin/vehicles/${editingVehicle._id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(editData),
+      });
+      const data = await safeParseJson(res);
+      setEditSaving(false);
+      if (!res.ok) {
+        setEditError(data.error ?? "Failed to update vehicle.");
+        return;
+      }
+      await queryClient.invalidateQueries({ queryKey: ["admin", "vehicles"] });
+      setEditingVehicle(null);
+    } catch {
+      setEditSaving(false);
+      setEditError("Failed to update vehicle. Please try again.");
     }
-
-    await queryClient.invalidateQueries({ queryKey: ["admin", "vehicles"] });
-    setEditingVehicle(null);
   }
 
   function openVehicleDetails(vehicle: Vehicle) {
@@ -120,20 +137,18 @@ export default function VehiclesPage() {
   async function deleteVehicle(vehicle: Vehicle) {
     const shouldDelete = window.confirm(`Permanently delete vehicle "${vehicle.name}" (${vehicle.vehicleNumber})? This cannot be undone.`);
     if (!shouldDelete) return;
-
-    const res = await fetch(`/api/admin/vehicles/${vehicle._id}`, {
-      method: "DELETE",
-    });
-    const data = await safeParseJson(res);
-    if (!res.ok) {
-      setFormError(data.error ?? "Failed to delete vehicle.");
-      return;
-    }
-
-    await queryClient.invalidateQueries({ queryKey: ["admin", "vehicles"] });
-    setSelectedVehicle(null);
-    if (editingVehicle?._id === vehicle._id) {
-      setEditingVehicle(null);
+    try {
+      const res = await fetch(`/api/admin/vehicles/${vehicle._id}`, { method: "DELETE" });
+      const data = await safeParseJson(res);
+      if (!res.ok) {
+        setFormError(data.error ?? "Failed to delete vehicle.");
+        return;
+      }
+      await queryClient.invalidateQueries({ queryKey: ["admin", "vehicles"] });
+      setSelectedVehicle(null);
+      if (editingVehicle?._id === vehicle._id) setEditingVehicle(null);
+    } catch {
+      setFormError("Failed to delete vehicle. Please try again.");
     }
   }
 
@@ -369,12 +384,13 @@ export default function VehiclesPage() {
               <button
                 type="button"
                 className={`btn ${selectedVehicle.isActive ? "btn-danger" : "btn-success"}`}
+                disabled={togglingId === selectedVehicle._id}
                 onClick={async () => {
-                  await toggleVehicle(selectedVehicle);
-                  setSelectedVehicle((prev) => prev ? { ...prev, isActive: !prev.isActive } : prev);
+                  const ok = await toggleVehicle(selectedVehicle);
+                  if (ok) setSelectedVehicle((prev) => prev ? { ...prev, isActive: !prev.isActive } : prev);
                 }}
               >
-                {selectedVehicle.isActive ? "Disable" : "Enable"}
+                {togglingId === selectedVehicle._id ? "..." : selectedVehicle.isActive ? "Disable" : "Enable"}
               </button>
               <button
                 type="button"

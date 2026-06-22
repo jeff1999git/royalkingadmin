@@ -25,6 +25,7 @@ export default function DriversPage() {
     const [formError, setFormError] = useState("");
     const [formSuccess, setFormSuccess] = useState("");
     const [submitting, setSubmitting] = useState(false);
+    const [togglingId, setTogglingId] = useState<string | null>(null);
     const [editingDriver, setEditingDriver] = useState<Driver | null>(null);
     const [editData, setEditData] = useState({
         name: "",
@@ -81,13 +82,27 @@ export default function DriversPage() {
         }
     }
 
-    async function toggleActive(driver: Driver) {
-        await fetch(`/api/admin/drivers/${driver._id}`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ isActive: !driver.isActive }),
-        });
-        await queryClient.invalidateQueries({ queryKey: ["admin", "drivers"] });
+    async function toggleActive(driver: Driver): Promise<boolean> {
+        setTogglingId(driver._id);
+        try {
+            const res = await fetch(`/api/admin/drivers/${driver._id}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ isActive: !driver.isActive }),
+            });
+            if (!res.ok) {
+                const data = await safeParseJson(res);
+                setFormError(data.error ?? "Failed to update driver status.");
+                return false;
+            }
+            await queryClient.invalidateQueries({ queryKey: ["admin", "drivers"] });
+            return true;
+        } catch {
+            setFormError("Failed to update driver status. Please try again.");
+            return false;
+        } finally {
+            setTogglingId(null);
+        }
     }
 
     function openEdit(driver: Driver) {
@@ -133,19 +148,18 @@ export default function DriversPage() {
     async function deleteDriver(driver: Driver) {
         const shouldDelete = window.confirm(`Permanently delete driver "${driver.name}"? This cannot be undone.`);
         if (!shouldDelete) return;
-
-        const res = await fetch(`/api/admin/drivers/${driver._id}`, {
-            method: "DELETE",
-        });
-        const data = await safeParseJson(res);
-        if (!res.ok) {
-            setFormError(data.error ?? "Failed to delete driver");
-            return;
-        }
-        await queryClient.invalidateQueries({ queryKey: ["admin", "drivers"] });
-        setSelectedDriver(null);
-        if (editingDriver?._id === driver._id) {
-            setEditingDriver(null);
+        try {
+            const res = await fetch(`/api/admin/drivers/${driver._id}`, { method: "DELETE" });
+            const data = await safeParseJson(res);
+            if (!res.ok) {
+                setFormError(data.error ?? "Failed to delete driver");
+                return;
+            }
+            await queryClient.invalidateQueries({ queryKey: ["admin", "drivers"] });
+            setSelectedDriver(null);
+            if (editingDriver?._id === driver._id) setEditingDriver(null);
+        } catch {
+            setFormError("Failed to delete driver. Please try again.");
         }
     }
 
@@ -388,12 +402,13 @@ export default function DriversPage() {
                             <button
                                 type="button"
                                 className={`btn ${selectedDriver.isActive ? "btn-danger" : "btn-success"}`}
+                                disabled={togglingId === selectedDriver._id}
                                 onClick={async () => {
-                                    await toggleActive(selectedDriver);
-                                    setSelectedDriver((prev) => prev ? { ...prev, isActive: !prev.isActive } : prev);
+                                    const ok = await toggleActive(selectedDriver);
+                                    if (ok) setSelectedDriver((prev) => prev ? { ...prev, isActive: !prev.isActive } : prev);
                                 }}
                             >
-                                {selectedDriver.isActive ? "Deactivate" : "Activate"}
+                                {togglingId === selectedDriver._id ? "..." : selectedDriver.isActive ? "Deactivate" : "Activate"}
                             </button>
                             <button
                                 type="button"

@@ -48,6 +48,7 @@ const AssignmentSchema = new mongoose.Schema<AssignmentDocument>(
 
 AssignmentSchema.index({ driver: 1, scheduledDate: -1 });
 AssignmentSchema.index({ status: 1, scheduledDate: -1 });
+AssignmentSchema.index({ supplyPoint: 1, scheduledDate: -1 });
 
 const Assignment =
     (mongoose.models.Assignment as Model<AssignmentDocument>) ||

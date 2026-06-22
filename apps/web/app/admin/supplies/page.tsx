@@ -134,7 +134,6 @@ export default function SuppliesPage() {
     driver: "",
     vehicle: "",
   });
-  const [drivers, setDrivers] = useState<DriverOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [selectedLog, setSelectedLog] = useState<SupplyLog | null>(null);
@@ -186,12 +185,6 @@ export default function SuppliesPage() {
       setError("Couldn't start the download automatically. The image was opened in a new tab.");
     }
   }
-
-  useEffect(() => {
-    if (driverOptions) {
-      setDrivers(driverOptions);
-    }
-  }, [driverOptions]);
 
   useEffect(() => {
     const isWater = supplyTab === "water";
@@ -572,59 +565,54 @@ export default function SuppliesPage() {
     }
 
     setEditSaving(true);
-    const res = await fetch(`/api/admin/supplies/${editingLog._id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(
+    try {
+      const res = await fetch(`/api/admin/supplies/${editingLog._id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(
+          editingLog.logType === "cash"
+            ? {
+                amount: Number(editingAmount),
+                adminRemark: editingRemark,
+                cashType: editingCashType,
+                notes: editingDriverRemark,
+              }
+            : {
+                cansDelivered: editingCansDelivered !== "" ? Number(editingCansDelivered) : undefined,
+                cansTakenBack: editingCansTakenBack !== "" ? Number(editingCansTakenBack) : undefined,
+                notes: editingDriverRemark,
+                adminRemark: editingRemark,
+              }
+        ),
+      });
+      setEditSaving(false);
+
+      if (!res.ok) {
+        setError("Failed to update. Please try again.");
+        return;
+      }
+
+      const updated = (await res.json()) as SupplyLog;
+      const updatedWithFormatted = {
+        ...updated,
+        formattedSuppliedAt: updated.formattedSuppliedAt ?? formatDateTime(updated.suppliedAt),
+      };
+
+      const listQueryKey =
         editingLog.logType === "cash"
-          ? {
-              amount: Number(editingAmount),
-              adminRemark: editingRemark,
-              cashType: editingCashType,
-              notes: editingDriverRemark,
-            }
-          : {
-              cansDelivered: editingCansDelivered !== "" ? Number(editingCansDelivered) : undefined,
-              cansTakenBack: editingCansTakenBack !== "" ? Number(editingCansTakenBack) : undefined,
-              notes: editingDriverRemark,
-              adminRemark: editingRemark,
-            }
-      ),
-    });
-    setEditSaving(false);
+          ? ["admin", "supplies", "cash-credits", filters]
+          : ["admin", "supplies", "added", filters];
 
-    if (!res.ok) {
-      setError("Failed to update amount.");
-      return;
+      queryClient.setQueryData<SupplyLog[]>(
+        listQueryKey,
+        (prev) => prev?.map((log) => log._id === updated._id ? updatedWithFormatted : log) ?? prev,
+      );
+      setSelectedLog((prev) => prev && prev._id === updated._id ? updatedWithFormatted : prev);
+      setEditingLog(null);
+    } catch {
+      setEditSaving(false);
+      setError("Failed to update. Please try again.");
     }
-
-    const updated = (await res.json()) as SupplyLog;
-    // Update the cached query data so lists and modals reflect the changes.
-    const updatedWithFormatted = {
-      ...updated,
-      formattedSuppliedAt:
-        updated.formattedSuppliedAt ??
-        formatDateTime(updated.suppliedAt),
-    };
-
-    const listQueryKey =
-      editingLog.logType === "cash"
-        ? ["admin", "supplies", "cash-credits", filters]
-        : ["admin", "supplies", "added", filters];
-
-    queryClient.setQueryData<SupplyLog[]>(
-      listQueryKey,
-      (prev) =>
-        prev?.map((log) =>
-          log._id === updated._id ? updatedWithFormatted : log,
-        ) ?? prev,
-    );
-    setSelectedLog((prev) =>
-      prev && prev._id === updated._id
-        ? updatedWithFormatted
-        : prev,
-    );
-    setEditingLog(null);
   }
 
   async function deleteSupplyLog(log: SupplyLog) {
@@ -632,19 +620,20 @@ export default function SuppliesPage() {
     if (!confirmed) return;
 
     setDeleteSaving(true);
-    const res = await fetch(`/api/admin/supplies/${log._id}`, {
-      method: "DELETE",
-    });
-    setDeleteSaving(false);
-
-    if (!res.ok) {
-      setError("Failed to delete supply log.");
-      return;
+    try {
+      const res = await fetch(`/api/admin/supplies/${log._id}`, { method: "DELETE" });
+      setDeleteSaving(false);
+      if (!res.ok) {
+        setError("Failed to delete supply log.");
+        return;
+      }
+      setSelectedLog(null);
+      setEditingLog(null);
+      await queryClient.invalidateQueries({ queryKey: ["admin", "supplies"] });
+    } catch {
+      setDeleteSaving(false);
+      setError("Failed to delete supply log. Please try again.");
     }
-
-    setSelectedLog(null);
-    setEditingLog(null);
-    await queryClient.invalidateQueries({ queryKey: ["admin", "supplies"] });
   }
 
   return (
@@ -761,7 +750,7 @@ export default function SuppliesPage() {
               onChange={(e) => setFilters((f) => ({ ...f, driver: e.target.value }))}
             >
               <option value="">All Drivers</option>
-              {drivers.map((driver) => (
+              {(driverOptions ?? []).map((driver) => (
                 <option key={driver._id} value={driver._id}>
                   {driver.name} (@{driver.username})
                 </option>

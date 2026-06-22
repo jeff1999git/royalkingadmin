@@ -60,6 +60,7 @@ const SupplyLogSchema = new Schema<SupplyLogDocument>(
 SupplyLogSchema.index({ driver: 1, suppliedAt: -1 });
 SupplyLogSchema.index({ suppliedAt: -1 });
 SupplyLogSchema.index({ logType: 1, suppliedAt: -1 });
+SupplyLogSchema.index({ logType: 1, driver: 1, suppliedAt: -1 });
 SupplyLogSchema.index({ customer: 1, suppliedAt: -1 });
 
 const SupplyLog =

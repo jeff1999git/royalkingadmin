@@ -33,7 +33,6 @@ const CustomerSchema = new Schema<CustomerDocument>(
 
 CustomerSchema.index({ isActive: 1, name: 1 });
 CustomerSchema.index({ area: 1, isActive: 1 });
-CustomerSchema.index({ phone: 1 }, { unique: true });
 
 const Customer =
   (models.Customer as Model<CustomerDocument>) ||
