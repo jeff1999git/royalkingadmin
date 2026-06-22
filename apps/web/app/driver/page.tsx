@@ -291,16 +291,6 @@ export default function DriverDashboard() {
     }
   }, [vehiclesData]);
 
-  // Auto-fill cans from selected delivery option
-  useEffect(() => {
-    if (deliveryForm.deliveryKey && deliveryOptions.length > 0) {
-      const opt = deliveryOptions.find((o) => o.key === deliveryForm.deliveryKey);
-      if (opt) {
-        setDeliveryForm((f) => ({ ...f, cansDelivered: String(opt.subscriptionCans) }));
-      }
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [deliveryForm.deliveryKey]);
 
   // Close customer dropdown on outside click
   useEffect(() => {
@@ -492,13 +482,19 @@ export default function DriverDashboard() {
       return;
     }
 
+    if (deliveryForm.cansDelivered === "" && deliveryForm.cansTakenBack === "") {
+      setError("Enter cans delivered, cans taken back, or both.");
+      setSubmitting(false);
+      return;
+    }
+
     const res = await fetch("/api/driver/supplies", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         logType: "water",
         customerId: selectedOpt.customerId,
-        cansDelivered: Number(deliveryForm.cansDelivered),
+        cansDelivered: deliveryForm.cansDelivered !== "" ? Number(deliveryForm.cansDelivered) : undefined,
         cansTakenBack: deliveryForm.cansTakenBack !== "" ? Number(deliveryForm.cansTakenBack) : undefined,
         vehicleId: deliveryForm.vehicleId || undefined,
         notes: deliveryForm.notes,
@@ -746,12 +742,11 @@ export default function DriverDashboard() {
                     id="cansDelivered"
                     className="form-input"
                     type="number"
-                    min="1"
+                    min="0"
                     step="1"
                     value={deliveryForm.cansDelivered}
                     onChange={(e) => setDeliveryForm((f) => ({ ...f, cansDelivered: e.target.value }))}
                     placeholder="e.g. 2"
-                    required
                   />
                 </div>
                 <div className="form-group">

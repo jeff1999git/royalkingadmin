@@ -92,14 +92,17 @@ export async function POST(req: NextRequest) {
     if (!Types.ObjectId.isValid(customerId)) {
       return NextResponse.json({ error: "Invalid customer." }, { status: 400 });
     }
-    if (cansDelivered === undefined || !Number.isInteger(cansDelivered) || cansDelivered < 1) {
-      return NextResponse.json({ error: "Cans delivered must be a positive number." }, { status: 400 });
+    if (cansDelivered === undefined && cansTakenBack === undefined) {
+      return NextResponse.json({ error: "Enter cans delivered, cans taken back, or both." }, { status: 400 });
     }
-    if (vehicleId && !Types.ObjectId.isValid(vehicleId)) {
-      return NextResponse.json({ error: "Invalid vehicle." }, { status: 400 });
+    if (cansDelivered !== undefined && (!Number.isInteger(cansDelivered) || cansDelivered < 0)) {
+      return NextResponse.json({ error: "Cans delivered must be a non-negative integer." }, { status: 400 });
     }
     if (cansTakenBack !== undefined && (!Number.isInteger(cansTakenBack) || cansTakenBack < 0)) {
       return NextResponse.json({ error: "Cans taken back must be a non-negative integer." }, { status: 400 });
+    }
+    if (vehicleId && !Types.ObjectId.isValid(vehicleId)) {
+      return NextResponse.json({ error: "Invalid vehicle." }, { status: 400 });
     }
   }
 
