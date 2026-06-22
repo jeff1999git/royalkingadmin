@@ -21,6 +21,7 @@ interface SupplyLog {
   formattedSuppliedAt?: string;
   pointName?: string;
   cansDelivered?: number;
+  cansTakenBack?: number;
   notes?: string;
   amount?: number;
   logType?: "water" | "cash";
@@ -54,6 +55,7 @@ type ExportRow = {
   driver: string;
   customer?: string;
   cans?: string;
+  cansTakenBack?: string;
   vehicle?: string;
   amount: string;
   cashType?: string;
@@ -258,6 +260,10 @@ export default function SuppliesPage() {
       (sum, log) => sum + (log.cansDelivered ?? 0),
       0,
     );
+    const totalCansTakenBack = effectiveLogs.reduce(
+      (sum, log) => sum + (log.cansTakenBack ?? 0),
+      0,
+    );
     return {
       total: effectiveLogs.length,
       uniqueDrivers: new Set(
@@ -267,6 +273,7 @@ export default function SuppliesPage() {
         effectiveLogs.map((l) => l.customer?._id ?? l.pointName ?? ""),
       ).size,
       totalCans,
+      totalCansTakenBack,
       totalAmount,
     };
   }, [effectiveLogs]);
@@ -283,6 +290,7 @@ export default function SuppliesPage() {
       driver: `${log.driver?.name ?? ""} (@${log.driver?.username ?? ""})`,
       customer: log.customer?.name ?? log.pointName ?? "-",
       cans: log.cansDelivered !== undefined ? String(log.cansDelivered) : "-",
+      cansTakenBack: log.cansTakenBack !== undefined ? String(log.cansTakenBack) : "-",
       vehicle: `${log.vehicle?.name ?? ""} - ${log.vehicle?.vehicleNumber ?? ""}`,
       amount: log.amount !== undefined ? String(log.amount) : "-",
       cashType: log.cashType ?? "-",
@@ -328,19 +336,31 @@ export default function SuppliesPage() {
           <th>Date & Time</th>
           <th>Driver</th>
           <th>Customer</th>
-          <th>Cans</th>
+          <th>Cans Del.</th>
+          <th>Taken Back</th>
           <th>Amount</th>
           <th>Admin Remark</th>
         </tr>`;
     const tableRows = rows
       .map(
-        (r) => `<tr>
+        (r) => isCashTab
+          ? `<tr>
           <td>${r.no}</td>
           <td>${r.dateTime}</td>
           <td>${r.driver}</td>
-          <td>${isCashTab ? r.cashType : r.customer}</td>
-          <td>${isCashTab ? r.amount : r.cans}</td>
-          <td>${isCashTab ? r.note : r.amount}</td>
+          <td>${r.cashType}</td>
+          <td>${r.amount}</td>
+          <td>${r.note}</td>
+          <td>${r.remark}</td>
+        </tr>`
+          : `<tr>
+          <td>${r.no}</td>
+          <td>${r.dateTime}</td>
+          <td>${r.driver}</td>
+          <td>${r.customer}</td>
+          <td>${r.cans}</td>
+          <td>${r.cansTakenBack}</td>
+          <td>${r.amount}</td>
           <td>${r.remark}</td>
         </tr>`
       )
@@ -402,10 +422,11 @@ export default function SuppliesPage() {
           { key: "no", title: "No.", width: 60 },
           { key: "dateTime", title: "Date & Time", width: 200 },
           { key: "driver", title: "Driver", width: 260 },
-          { key: "customer", title: "Customer", width: 260 },
-          { key: "cans", title: "Cans", width: 80 },
-          { key: "amount", title: "Amount", width: 120 },
-          { key: "remark", title: "Admin Remark", width: 280 },
+          { key: "customer", title: "Customer", width: 220 },
+          { key: "cans", title: "Cans Del.", width: 80 },
+          { key: "cansTakenBack", title: "Taken Back", width: 90 },
+          { key: "amount", title: "Amount", width: 110 },
+          { key: "remark", title: "Admin Remark", width: 240 },
         ];
 
     const outerPadding = 20;
@@ -765,7 +786,8 @@ export default function SuppliesPage() {
         {supplyTab === "water" && (
           <>
             <span><strong style={{ color: "var(--text-primary)" }}>Customers:</strong> {summary.uniqueCustomers}</span>
-            <span><strong style={{ color: "var(--text-primary)" }}>Cans:</strong> {summary.totalCans}</span>
+            <span><strong style={{ color: "var(--text-primary)" }}>Cans Del.:</strong> {summary.totalCans}</span>
+            <span><strong style={{ color: "var(--text-primary)" }}>Taken Back:</strong> {summary.totalCansTakenBack}</span>
           </>
         )}
         <span style={{ fontSize: "1.05rem", fontWeight: 800, color: "var(--text-primary)" }}>
@@ -849,7 +871,12 @@ export default function SuppliesPage() {
                           style={{ cursor: "pointer" }}
                         >
                           {supplyTab === "water" ? (
-                            <strong>{log.cansDelivered ?? "-"}</strong>
+                            <div>
+                              <strong>{log.cansDelivered ?? "-"}</strong>
+                              {log.cansTakenBack !== undefined && (
+                                <div style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>↩ {log.cansTakenBack}</div>
+                              )}
+                            </div>
                           ) : log.cashType === "fuel" ? (
                             log.billImageUrl ? (
                               <button
@@ -990,6 +1017,12 @@ export default function SuppliesPage() {
                 <div>
                   <div className="text-sm text-muted">Cans Delivered</div>
                   <div style={{ fontWeight: 700, fontSize: "1.1rem" }}>{selectedLog.cansDelivered}</div>
+                </div>
+              )}
+              {selectedLog.cansTakenBack !== undefined && (
+                <div>
+                  <div className="text-sm text-muted">Cans Taken Back</div>
+                  <div style={{ fontWeight: 700, fontSize: "1.1rem" }}>{selectedLog.cansTakenBack}</div>
                 </div>
               )}
               {(selectedLog.vehicle?.name || selectedLog.vehicle?.vehicleNumber || selectedLog.vehicle?.capacity) && (

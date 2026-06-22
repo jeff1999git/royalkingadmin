@@ -55,6 +55,7 @@ interface SupplyLog {
   formattedSuppliedAt?: string;
   pointName?: string;
   cansDelivered?: number;
+  cansTakenBack?: number;
   notes?: string;
   amount?: number;
   logType?: "water" | "cash";
