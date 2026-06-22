@@ -16,6 +16,16 @@ interface Customer {
   name: string;
   phone?: string;
   area?: string;
+  locationType?: "home" | "office" | "both";
+  subscriptionCans: number;
+  cashPerCan?: number;
+}
+
+interface DeliveryOption {
+  key: string;
+  customerId: string;
+  label: string;
+  locationType: "home" | "office" | null;
   subscriptionCans: number;
   cashPerCan?: number;
 }
@@ -197,11 +207,14 @@ export default function DriverDashboard() {
 
   // Delivery form
   const [deliveryForm, setDeliveryForm] = useState({
-    customerId: "",
+    deliveryKey: "",
     cansDelivered: "",
     vehicleId: "",
     notes: "",
   });
+  const [customerSearch, setCustomerSearch] = useState("");
+  const [showCustomerList, setShowCustomerList] = useState(false);
+  const customerListRef = useRef<HTMLDivElement | null>(null);
 
   // Register customer form
   const [registerForm, setRegisterForm] = useState({
@@ -276,18 +289,27 @@ export default function DriverDashboard() {
     }
   }, [vehiclesData]);
 
-  // Auto-fill cans from selected customer's subscription
+  // Auto-fill cans from selected delivery option
   useEffect(() => {
-    if (deliveryForm.customerId && customersData) {
-      const customer = customersData.find((c) => c._id === deliveryForm.customerId);
-      if (customer) {
-        setDeliveryForm((f) => ({
-          ...f,
-          cansDelivered: String(customer.subscriptionCans),
-        }));
+    if (deliveryForm.deliveryKey && deliveryOptions.length > 0) {
+      const opt = deliveryOptions.find((o) => o.key === deliveryForm.deliveryKey);
+      if (opt) {
+        setDeliveryForm((f) => ({ ...f, cansDelivered: String(opt.subscriptionCans) }));
       }
     }
-  }, [deliveryForm.customerId, customersData]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deliveryForm.deliveryKey]);
+
+  // Close customer dropdown on outside click
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      if (customerListRef.current && !customerListRef.current.contains(e.target as Node)) {
+        setShowCustomerList(false);
+      }
+    }
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
 
   useEffect(() => {
     if (logsData) {
@@ -340,6 +362,34 @@ export default function DriverDashboard() {
 
   const groupedDeliveryLogs = useMemo(() => buildGroupedLogs(deliveryLogs), [deliveryLogs]);
   const groupedCashLogs = useMemo(() => buildGroupedLogs(cashLogs), [cashLogs]);
+
+  const deliveryOptions = useMemo<DeliveryOption[]>(() => {
+    const opts: DeliveryOption[] = [];
+    for (const c of customersData ?? []) {
+      const firstName = c.name.split(" ")[0];
+      const lt = c.locationType;
+      if (!lt || lt === "home") {
+        opts.push({ key: `${c._id}-home`, customerId: c._id, label: `${firstName}'s House${c.phone ? ` (${c.phone})` : ""}`, locationType: "home", subscriptionCans: c.subscriptionCans, cashPerCan: c.cashPerCan });
+      } else if (lt === "office") {
+        opts.push({ key: `${c._id}-office`, customerId: c._id, label: `${firstName}'s Office${c.phone ? ` (${c.phone})` : ""}`, locationType: "office", subscriptionCans: c.subscriptionCans, cashPerCan: c.cashPerCan });
+      } else if (lt === "both") {
+        opts.push({ key: `${c._id}-home`, customerId: c._id, label: `${firstName}'s House${c.phone ? ` (${c.phone})` : ""}`, locationType: "home", subscriptionCans: c.subscriptionCans, cashPerCan: c.cashPerCan });
+        opts.push({ key: `${c._id}-office`, customerId: c._id, label: `${firstName}'s Office${c.phone ? ` (${c.phone})` : ""}`, locationType: "office", subscriptionCans: c.subscriptionCans, cashPerCan: c.cashPerCan });
+      }
+    }
+    return opts.sort((a, b) => a.label.localeCompare(b.label));
+  }, [customersData]);
+
+  const filteredDeliveryOptions = useMemo(() => {
+    if (!customerSearch.trim()) return deliveryOptions;
+    const q = customerSearch.toLowerCase();
+    return deliveryOptions.filter((o) => o.label.toLowerCase().includes(q));
+  }, [deliveryOptions, customerSearch]);
+
+  const selectedDeliveryOption = useMemo(
+    () => deliveryOptions.find((o) => o.key === deliveryForm.deliveryKey) ?? null,
+    [deliveryOptions, deliveryForm.deliveryKey],
+  );
 
   const maxSelectableDateValue = toDateInputValue(new Date(Date.now() - 3 * 24 * 60 * 60 * 1000));
 
@@ -433,12 +483,19 @@ export default function DriverDashboard() {
     setSuccess("");
     setSubmitting(true);
 
+    const selectedOpt = deliveryOptions.find((o) => o.key === deliveryForm.deliveryKey);
+    if (!selectedOpt) {
+      setError("Please select a customer.");
+      setSubmitting(false);
+      return;
+    }
+
     const res = await fetch("/api/driver/supplies", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         logType: "water",
-        customerId: deliveryForm.customerId,
+        customerId: selectedOpt.customerId,
         cansDelivered: Number(deliveryForm.cansDelivered),
         vehicleId: deliveryForm.vehicleId || undefined,
         notes: deliveryForm.notes,
@@ -455,7 +512,8 @@ export default function DriverDashboard() {
     }
 
     setSuccess("Delivery logged successfully.");
-    setDeliveryForm({ customerId: "", cansDelivered: "", vehicleId: assignedVehicleId, notes: "" });
+    setDeliveryForm({ deliveryKey: "", cansDelivered: "", vehicleId: assignedVehicleId, notes: "" });
+    setCustomerSearch("");
     await queryClient.invalidateQueries({ queryKey: ["driver", "supplies"] });
   }
 
@@ -600,33 +658,84 @@ export default function DriverDashboard() {
             <form onSubmit={(e) => void submitDelivery(e)}>
               <div className="grid-2" style={{ marginBottom: "1rem" }}>
                 <div className="form-group" style={{ gridColumn: "1 / -1" }}>
-                  <label className="form-label" htmlFor="customerId">Customer *</label>
-                  <select
-                    id="customerId"
-                    className="form-select"
-                    value={deliveryForm.customerId}
-                    onChange={(e) => setDeliveryForm((f) => ({ ...f, customerId: e.target.value }))}
-                    required
-                    disabled={customersLoading}
-                  >
-                    <option value="">{customersLoading ? "Loading customers..." : "Select customer"}</option>
-                    {(customersData ?? []).map((c) => (
-                      <option key={c._id} value={c._id}>
-                        {c.name}{c.area ? ` — ${c.area}` : ""}{c.phone ? ` (${c.phone})` : ""}
-                      </option>
-                    ))}
-                  </select>
-                  {deliveryForm.customerId && customersData && (() => {
-                    const c = customersData.find((x) => x._id === deliveryForm.customerId);
-                    return c ? (
-                      <div style={{ fontSize: "0.8rem", color: "var(--text-secondary)", marginTop: "0.3rem", display: "flex", gap: "1rem", flexWrap: "wrap" }}>
-                        <span>Subscription: {c.subscriptionCans} can{c.subscriptionCans !== 1 ? "s" : ""}/day</span>
-                        {c.cashPerCan !== undefined && (
-                          <span>Rate: ₹{c.cashPerCan}/can</span>
+                  <label className="form-label">Customer *</label>
+                  <div ref={customerListRef} style={{ position: "relative" }}>
+                    <div style={{ position: "relative" }}>
+                      <input
+                        className="form-input"
+                        style={{ paddingRight: deliveryForm.deliveryKey ? "2.5rem" : undefined }}
+                        value={deliveryForm.deliveryKey ? (selectedDeliveryOption?.label ?? "") : customerSearch}
+                        readOnly={!!deliveryForm.deliveryKey}
+                        onChange={(e) => {
+                          if (deliveryForm.deliveryKey) return;
+                          setCustomerSearch(e.target.value);
+                          setShowCustomerList(true);
+                        }}
+                        onFocus={() => { if (!deliveryForm.deliveryKey) setShowCustomerList(true); }}
+                        onClick={() => {
+                          if (deliveryForm.deliveryKey) {
+                            setDeliveryForm((f) => ({ ...f, deliveryKey: "", cansDelivered: "" }));
+                            setCustomerSearch("");
+                            setShowCustomerList(true);
+                          }
+                        }}
+                        placeholder={customersLoading ? "Loading customers..." : "Search customer..."}
+                        autoComplete="off"
+                        disabled={customersLoading}
+                      />
+                      {deliveryForm.deliveryKey && (
+                        <button
+                          type="button"
+                          onClick={() => { setDeliveryForm((f) => ({ ...f, deliveryKey: "", cansDelivered: "" })); setCustomerSearch(""); }}
+                          style={{ position: "absolute", right: "0.6rem", top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", fontSize: "1rem", lineHeight: 1, padding: "0.1rem 0.25rem" }}
+                          aria-label="Clear selection"
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
+                    {showCustomerList && !deliveryForm.deliveryKey && (
+                      <div style={{ position: "absolute", top: "calc(100% + 2px)", left: 0, right: 0, background: "#fff", border: "1px solid var(--border-active)", borderRadius: "var(--radius-sm)", zIndex: 50, maxHeight: "220px", overflowY: "auto", boxShadow: "var(--shadow-md)" }}>
+                        {filteredDeliveryOptions.length > 0 ? filteredDeliveryOptions.map((opt, i) => (
+                          <button
+                            key={opt.key}
+                            type="button"
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              setDeliveryForm((f) => ({ ...f, deliveryKey: opt.key }));
+                              setCustomerSearch("");
+                              setShowCustomerList(false);
+                            }}
+                            style={{
+                              display: "flex", alignItems: "center", justifyContent: "space-between",
+                              width: "100%", textAlign: "left", padding: "0.65rem 0.875rem",
+                              border: "none", borderBottom: i < filteredDeliveryOptions.length - 1 ? "1px solid var(--border)" : "none",
+                              background: "transparent", cursor: "pointer", fontSize: "0.9rem", color: "var(--text-primary)",
+                            }}
+                          >
+                            <span>{opt.label}</span>
+                            {opt.locationType && (
+                              <span style={{ fontSize: "0.72rem", fontWeight: 700, padding: "0.1rem 0.45rem", borderRadius: "99px", marginLeft: "0.5rem", flexShrink: 0, background: opt.locationType === "home" ? "#e8f5e9" : "#e3f2fd", color: opt.locationType === "home" ? "#2e7d32" : "#1565c0" }}>
+                                {opt.locationType === "home" ? "Home" : "Office"}
+                              </span>
+                            )}
+                          </button>
+                        )) : (
+                          <div style={{ padding: "0.65rem 0.875rem", color: "var(--text-muted)", fontSize: "0.9rem" }}>
+                            {customerSearch ? "No customers found." : "No customers available."}
+                          </div>
                         )}
                       </div>
-                    ) : null;
-                  })()}
+                    )}
+                  </div>
+                  {selectedDeliveryOption && (
+                    <div style={{ fontSize: "0.8rem", color: "var(--text-secondary)", marginTop: "0.3rem", display: "flex", gap: "1rem", flexWrap: "wrap" }}>
+                      <span>Subscription: {selectedDeliveryOption.subscriptionCans} can{selectedDeliveryOption.subscriptionCans !== 1 ? "s" : ""}/day</span>
+                      {selectedDeliveryOption.cashPerCan !== undefined && (
+                        <span>Rate: ₹{selectedDeliveryOption.cashPerCan}/can</span>
+                      )}
+                    </div>
+                  )}
                 </div>
                 <div className="form-group">
                   <label className="form-label" htmlFor="cansDelivered">Cans Delivered *</label>
