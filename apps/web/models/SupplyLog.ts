@@ -56,6 +56,10 @@ const SupplyLogSchema = new Schema<SupplyLogDocument>(
   { timestamps: true }
 );
 
+SupplyLogSchema.index({ driver: 1, suppliedAt: -1 });
+SupplyLogSchema.index({ suppliedAt: -1 });
+SupplyLogSchema.index({ logType: 1, suppliedAt: -1 });
+
 const SupplyLog =
   (models.SupplyLog as Model<SupplyLogDocument>) ||
   model<SupplyLogDocument>("SupplyLog", SupplyLogSchema);

@@ -1,6 +1,19 @@
-import mongoose from "mongoose";
+import mongoose, { type Model, type Types } from "mongoose";
 
-const AssignmentSchema = new mongoose.Schema(
+export interface AssignmentDocument {
+    supplyPoint: Types.ObjectId;
+    driver: Types.ObjectId;
+    tankerType: string;
+    frequency: "once" | "daily";
+    scheduledDate: Date;
+    status: "pending" | "completed";
+    completedAt?: Date;
+    remark?: string;
+    createdAt: Date;
+    updatedAt: Date;
+}
+
+const AssignmentSchema = new mongoose.Schema<AssignmentDocument>(
     {
         supplyPoint: {
             type: mongoose.Schema.Types.ObjectId,
@@ -33,5 +46,11 @@ const AssignmentSchema = new mongoose.Schema(
     { timestamps: true }
 );
 
-delete mongoose.models.Assignment;
-export default mongoose.model("Assignment", AssignmentSchema);
+AssignmentSchema.index({ driver: 1, scheduledDate: -1 });
+AssignmentSchema.index({ status: 1, scheduledDate: -1 });
+
+const Assignment =
+    (mongoose.models.Assignment as Model<AssignmentDocument>) ||
+    mongoose.model<AssignmentDocument>("Assignment", AssignmentSchema);
+
+export default Assignment;

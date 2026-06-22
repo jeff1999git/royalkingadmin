@@ -16,6 +16,7 @@ export async function GET() {
         .populate("supplyPoint", "name address tankerTypes")
         .populate("driver", "name username phone")
         .sort({ scheduledDate: -1 })
+        .limit(100)
         .lean();
 
     return NextResponse.json(assignments);

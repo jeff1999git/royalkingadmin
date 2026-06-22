@@ -110,32 +110,15 @@ export function useAdminVehicles() {
 export function useAdminTodayStats(todayIso: string) {
   return useQuery({
     queryKey: ["admin", "stats", todayIso],
-    staleTime: 1000 * 30,
+    staleTime: 1000 * 60,
     queryFn: async () => {
-      const [driversRes, vehiclesRes, suppliesRes] = await Promise.all([
-        fetch("/api/admin/drivers", { cache: "no-store" }),
-        fetch("/api/admin/vehicles", { cache: "no-store" }),
-        fetch(`/api/admin/supplies?date=${encodeURIComponent(todayIso)}&logType=water`, { cache: "no-store" }),
-      ]);
-
-      if (!driversRes.ok || !vehiclesRes.ok || !suppliesRes.ok) {
-        throw new Error("Failed to load dashboard data");
-      }
-
-      const [drivers, vehicles, supplies] = (await Promise.all([
-        driversRes.json(),
-        vehiclesRes.json(),
-        suppliesRes.json(),
-      ])) as [unknown, unknown, unknown];
-
-      const driversArr = Array.isArray(drivers) ? drivers : [];
-      const vehiclesArr = Array.isArray(vehicles) ? vehicles : [];
-      const suppliesArr = Array.isArray(supplies) ? supplies : [];
-
+      const res = await fetch(`/api/admin/stats?date=${encodeURIComponent(todayIso)}`, { cache: "no-store" });
+      if (!res.ok) throw new Error("Failed to load dashboard stats");
+      const data = (await res.json()) as { drivers: number; vehicles: number; todaySupplies: number };
       return {
-        drivers: driversArr.length,
-        vehicles: vehiclesArr.length,
-        todaySupplies: suppliesArr.length,
+        drivers: data.drivers,
+        vehicles: data.vehicles,
+        todaySupplies: data.todaySupplies,
       };
     },
   });
@@ -164,14 +147,15 @@ export function useAdminPaginatedSupplies(page: number, limit: number) {
 export function useAdminPendingSupplies() {
   return useQuery<SupplyLog[]>({
     queryKey: ["admin", "supplies", "pending"],
-    staleTime: 1000 * 15,
+    staleTime: 1000 * 60,
     queryFn: async () => {
-      const res = await fetch("/api/admin/supplies?amountStatus=pending&logType=water", { cache: "no-store" });
+      const res = await fetch("/api/admin/supplies?amountStatus=pending&logType=water&page=1&limit=100", { cache: "no-store" });
       if (!res.ok) {
         throw new Error("Failed to fetch pending supplies");
       }
       const data = (await res.json()) as unknown;
-      const baseLogs = Array.isArray(data) ? (data as SupplyLog[]) : [];
+      const paged = data as PaginatedSupplyLogs;
+      const baseLogs = Array.isArray(paged.logs) ? paged.logs : [];
       return baseLogs.map((log) => ({
         ...log,
         formattedSuppliedAt: log.formattedSuppliedAt ?? formatDateTime(log.suppliedAt),

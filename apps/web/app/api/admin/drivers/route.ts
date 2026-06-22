@@ -67,7 +67,7 @@ export async function POST(req: NextRequest) {
         assignedVehicle = normalizedVehicleId;
     }
 
-    const hashed = await bcrypt.hash(password, 10);
+    const hashed = await bcrypt.hash(password, 12);
     const createdDriver = await User.create({
         name,
         username,
