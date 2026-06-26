@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Types } from "mongoose";
 import { getServerSession } from "next-auth";
 import { authOptions } from "../../../../lib/auth";
 import { connectToDatabase } from "../../../../lib/mongodb";
@@ -71,7 +72,7 @@ export async function POST(req: NextRequest) {
       subscriptionCans,
       cashPerCan,
       registeredDate,
-      createdBy: session.user.id,
+      ...(Types.ObjectId.isValid(session.user.id) ? { createdBy: session.user.id } : {}),
     });
     return NextResponse.json(customer, { status: 201 });
   } catch (err: unknown) {

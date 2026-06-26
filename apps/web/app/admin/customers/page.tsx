@@ -18,8 +18,16 @@ interface Customer {
   createdAt: string;
 }
 
-function todayISO() {
-  return new Date().toISOString().split("T")[0] ?? "";
+function todayISO(): string {
+  const d = new Date();
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+}
+
+function isoToDateInput(iso?: string | null): string {
+  if (!iso) return todayISO();
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return todayISO();
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
 }
 
 const CUSTOMERS_KEY = ["admin", "customers"];
@@ -131,9 +139,7 @@ export default function CustomersPage() {
       subscriptionCans: String(customer.subscriptionCans),
       cashPerCan: customer.cashPerCan !== undefined ? String(customer.cashPerCan) : "",
       isActive: customer.isActive,
-      registeredDate: customer.registeredDate
-        ? new Date(customer.registeredDate).toISOString().split("T")[0] ?? todayISO()
-        : todayISO(),
+      registeredDate: isoToDateInput(customer.registeredDate ?? customer.createdAt),
     });
     setEditError("");
     setSelectedCustomer(null);
@@ -523,9 +529,7 @@ export default function CustomersPage() {
               <div>
                 <div className="text-sm text-muted">Added Date</div>
                 <div style={{ fontWeight: 600 }}>
-                  {selectedCustomer.registeredDate
-                    ? new Date(selectedCustomer.registeredDate).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })
-                    : "—"}
+                  {new Date(isoToDateInput(selectedCustomer.registeredDate ?? selectedCustomer.createdAt)).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
                 </div>
               </div>
             </div>
