@@ -29,9 +29,11 @@ export async function PATCH(
     subscriptionCans?: number | string;
     cashPerCan?: number | string | null;
     isActive?: boolean;
+    registeredDate?: string;
   };
 
   const setPayload: Record<string, unknown> = {};
+  const unsetPayload: Record<string, 1> = {};
 
   if (body.name !== undefined) {
     const name = body.name.trim();
@@ -43,18 +45,27 @@ export async function PATCH(
     if (!phone) return NextResponse.json({ error: "Phone cannot be empty." }, { status: 400 });
     setPayload.phone = phone;
   }
-  if (body.email !== undefined) setPayload.email = body.email.trim() || undefined;
+  if (body.email !== undefined) {
+    const email = body.email.trim();
+    if (email) setPayload.email = email;
+    else unsetPayload.email = 1;
+  }
   if (body.address !== undefined) {
     const address = body.address.trim();
     if (!address) return NextResponse.json({ error: "Location cannot be empty." }, { status: 400 });
     setPayload.address = address;
   }
-  if (body.area !== undefined) setPayload.area = body.area.trim() || undefined;
+  if (body.area !== undefined) {
+    const area = body.area.trim();
+    if (area) setPayload.area = area;
+    else unsetPayload.area = 1;
+  }
   if (body.locationType !== undefined) {
     if (body.locationType && body.locationType !== "home" && body.locationType !== "office" && body.locationType !== "both") {
       return NextResponse.json({ error: "Location type must be home, office, or both." }, { status: 400 });
     }
-    setPayload.locationType = body.locationType || undefined;
+    if (body.locationType) setPayload.locationType = body.locationType;
+    else unsetPayload.locationType = 1;
   }
   if (body.subscriptionCans !== undefined) {
     const cans = Number(body.subscriptionCans);
@@ -65,7 +76,7 @@ export async function PATCH(
   }
   if (body.cashPerCan !== undefined) {
     if (body.cashPerCan === null || body.cashPerCan === "") {
-      setPayload.cashPerCan = undefined;
+      unsetPayload.cashPerCan = 1;
     } else {
       const cashPerCan = Number(body.cashPerCan);
       if (isNaN(cashPerCan) || cashPerCan < 0) {
@@ -75,16 +86,29 @@ export async function PATCH(
     }
   }
   if (body.isActive !== undefined) setPayload.isActive = Boolean(body.isActive);
+  if (body.registeredDate !== undefined) {
+    const d = new Date(body.registeredDate);
+    if (isNaN(d.getTime())) {
+      return NextResponse.json({ error: "Invalid registered date." }, { status: 400 });
+    }
+    setPayload.registeredDate = d;
+  }
 
-  if (Object.keys(setPayload).length === 0) {
+  const hasSet = Object.keys(setPayload).length > 0;
+  const hasUnset = Object.keys(unsetPayload).length > 0;
+  if (!hasSet && !hasUnset) {
     return NextResponse.json({ error: "Nothing to update." }, { status: 400 });
   }
 
   await connectToDatabase();
   try {
+    const updateOp: Record<string, unknown> = {};
+    if (hasSet) updateOp.$set = setPayload;
+    if (hasUnset) updateOp.$unset = unsetPayload;
+
     const updated = await Customer.findByIdAndUpdate(
       id,
-      { $set: setPayload },
+      updateOp,
       { new: true }
     ).lean();
 

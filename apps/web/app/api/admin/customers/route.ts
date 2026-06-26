@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Types } from "mongoose";
 import { getServerSession } from "next-auth";
 import { authOptions } from "../../../../lib/auth";
 import { connectToDatabase } from "../../../../lib/mongodb";
@@ -33,6 +34,7 @@ export async function POST(req: NextRequest) {
     locationType?: "home" | "office" | "both";
     subscriptionCans?: number | string;
     cashPerCan?: number | string;
+    registeredDate?: string;
   };
 
   const name = body.name?.trim();
@@ -43,6 +45,7 @@ export async function POST(req: NextRequest) {
   const locationType = body.locationType;
   const subscriptionCans = Number(body.subscriptionCans ?? 1);
   const cashPerCan = body.cashPerCan !== undefined && body.cashPerCan !== "" ? Number(body.cashPerCan) : undefined;
+  const registeredDate = body.registeredDate ? new Date(body.registeredDate) : new Date();
 
   if (!name) return NextResponse.json({ error: "Name is required." }, { status: 400 });
   if (!phone) return NextResponse.json({ error: "Phone is required." }, { status: 400 });
@@ -68,7 +71,8 @@ export async function POST(req: NextRequest) {
       locationType,
       subscriptionCans,
       cashPerCan,
-      createdBy: session.user.id,
+      registeredDate,
+      ...(Types.ObjectId.isValid(session.user.id) ? { createdBy: session.user.id } : {}),
     });
     return NextResponse.json(customer, { status: 201 });
   } catch (err: unknown) {

@@ -358,15 +358,15 @@ export default function DriverDashboard() {
   const deliveryOptions = useMemo<DeliveryOption[]>(() => {
     const opts: DeliveryOption[] = [];
     for (const c of customersData ?? []) {
-      const firstName = c.name.split(" ")[0];
       const lt = c.locationType;
+      const displayLabel = `${c.name}${c.phone ? ` (${c.phone})` : ""}`;
       if (!lt || lt === "home") {
-        opts.push({ key: `${c._id}-home`, customerId: c._id, label: `${firstName}'s House${c.phone ? ` (${c.phone})` : ""}`, locationType: "home", subscriptionCans: c.subscriptionCans, cashPerCan: c.cashPerCan });
+        opts.push({ key: `${c._id}-home`, customerId: c._id, label: displayLabel, locationType: "home", subscriptionCans: c.subscriptionCans, cashPerCan: c.cashPerCan });
       } else if (lt === "office") {
-        opts.push({ key: `${c._id}-office`, customerId: c._id, label: `${firstName}'s Office${c.phone ? ` (${c.phone})` : ""}`, locationType: "office", subscriptionCans: c.subscriptionCans, cashPerCan: c.cashPerCan });
+        opts.push({ key: `${c._id}-office`, customerId: c._id, label: displayLabel, locationType: "office", subscriptionCans: c.subscriptionCans, cashPerCan: c.cashPerCan });
       } else if (lt === "both") {
-        opts.push({ key: `${c._id}-home`, customerId: c._id, label: `${firstName}'s House${c.phone ? ` (${c.phone})` : ""}`, locationType: "home", subscriptionCans: c.subscriptionCans, cashPerCan: c.cashPerCan });
-        opts.push({ key: `${c._id}-office`, customerId: c._id, label: `${firstName}'s Office${c.phone ? ` (${c.phone})` : ""}`, locationType: "office", subscriptionCans: c.subscriptionCans, cashPerCan: c.cashPerCan });
+        opts.push({ key: `${c._id}-home`, customerId: c._id, label: displayLabel, locationType: "home", subscriptionCans: c.subscriptionCans, cashPerCan: c.cashPerCan });
+        opts.push({ key: `${c._id}-office`, customerId: c._id, label: displayLabel, locationType: "office", subscriptionCans: c.subscriptionCans, cashPerCan: c.cashPerCan });
       }
     }
     return opts.sort((a, b) => a.label.localeCompare(b.label));
