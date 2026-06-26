@@ -6,6 +6,32 @@ import { connectToDatabase } from "../../../../../lib/mongodb";
 import Vehicle from "../../../../../models/Vehicle";
 import User from "../../../../../models/User";
 
+export async function GET(
+  _req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const session = await getServerSession(authOptions);
+  if (!session || session.user.role !== "admin") {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const { id } = await params;
+  if (!Types.ObjectId.isValid(id)) {
+    return NextResponse.json({ error: "Invalid vehicle id." }, { status: 400 });
+  }
+
+  await connectToDatabase();
+  const vehicle = await Vehicle.findById(id)
+    .select("name vehicleNumber capacity isActive odometer odometerLastUpdated odometerHistory createdAt")
+    .lean();
+
+  if (!vehicle) {
+    return NextResponse.json({ error: "Vehicle not found." }, { status: 404 });
+  }
+
+  return NextResponse.json(vehicle);
+}
+
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
