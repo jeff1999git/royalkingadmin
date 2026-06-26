@@ -29,6 +29,7 @@ export async function PATCH(
     subscriptionCans?: number | string;
     cashPerCan?: number | string | null;
     isActive?: boolean;
+    registeredDate?: string;
   };
 
   const setPayload: Record<string, unknown> = {};
@@ -75,6 +76,13 @@ export async function PATCH(
     }
   }
   if (body.isActive !== undefined) setPayload.isActive = Boolean(body.isActive);
+  if (body.registeredDate !== undefined) {
+    const d = new Date(body.registeredDate);
+    if (isNaN(d.getTime())) {
+      return NextResponse.json({ error: "Invalid registered date." }, { status: 400 });
+    }
+    setPayload.registeredDate = d;
+  }
 
   if (Object.keys(setPayload).length === 0) {
     return NextResponse.json({ error: "Nothing to update." }, { status: 400 });

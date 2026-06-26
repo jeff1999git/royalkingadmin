@@ -65,6 +65,7 @@ export async function POST(req: NextRequest) {
       locationType,
       subscriptionCans: 1,
       cashPerCan,
+      registeredDate: new Date(),
       createdBy: session.user.id,
     });
     return NextResponse.json(customer, { status: 201 });

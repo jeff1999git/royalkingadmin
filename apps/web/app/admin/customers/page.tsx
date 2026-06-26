@@ -14,7 +14,12 @@ interface Customer {
   subscriptionCans: number;
   cashPerCan?: number;
   isActive: boolean;
+  registeredDate?: string;
   createdAt: string;
+}
+
+function todayISO() {
+  return new Date().toISOString().split("T")[0] ?? "";
 }
 
 const CUSTOMERS_KEY = ["admin", "customers"];
@@ -46,6 +51,7 @@ export default function CustomersPage() {
     locationType: "home" as "home" | "office" | "both",
     subscriptionCans: "1",
     cashPerCan: "",
+    registeredDate: todayISO(),
   });
   const [formError, setFormError] = useState("");
   const [formSuccess, setFormSuccess] = useState("");
@@ -62,6 +68,7 @@ export default function CustomersPage() {
     subscriptionCans: "1",
     cashPerCan: "",
     isActive: true,
+    registeredDate: todayISO(),
   });
   const [editError, setEditError] = useState("");
   const [editSaving, setEditSaving] = useState(false);
@@ -96,13 +103,14 @@ export default function CustomersPage() {
           locationType: formData.locationType,
           subscriptionCans: Number(formData.subscriptionCans),
           cashPerCan: formData.cashPerCan !== "" ? Number(formData.cashPerCan) : undefined,
+          registeredDate: formData.registeredDate || undefined,
         }),
       });
       const data = await safeJson(res);
       setSubmitting(false);
       if (!res.ok) { setFormError(data.error ?? "Failed to create customer"); return; }
       setFormSuccess("Customer created!");
-      setFormData({ name: "", phone: "", email: "", address: "", area: "", locationType: "home", subscriptionCans: "1", cashPerCan: "" });
+      setFormData({ name: "", phone: "", email: "", address: "", area: "", locationType: "home", subscriptionCans: "1", cashPerCan: "", registeredDate: todayISO() });
       await queryClient.invalidateQueries({ queryKey: CUSTOMERS_KEY });
       setTimeout(() => { setShowForm(false); setFormSuccess(""); }, 1500);
     } catch {
@@ -123,6 +131,9 @@ export default function CustomersPage() {
       subscriptionCans: String(customer.subscriptionCans),
       cashPerCan: customer.cashPerCan !== undefined ? String(customer.cashPerCan) : "",
       isActive: customer.isActive,
+      registeredDate: customer.registeredDate
+        ? new Date(customer.registeredDate).toISOString().split("T")[0] ?? todayISO()
+        : todayISO(),
     });
     setEditError("");
     setSelectedCustomer(null);
@@ -146,6 +157,7 @@ export default function CustomersPage() {
           subscriptionCans: Number(editData.subscriptionCans),
           cashPerCan: editData.cashPerCan !== "" ? Number(editData.cashPerCan) : null,
           isActive: editData.isActive,
+          registeredDate: editData.registeredDate || undefined,
         }),
       });
       const data = await safeJson(res);
@@ -422,9 +434,20 @@ export default function CustomersPage() {
                   <label className="form-label" htmlFor="cCans">Subscription Cans/Day *</label>
                   <input id="cCans" className="form-input" type="number" min="1" step="1" value={formData.subscriptionCans} onChange={(e) => setFormData((f) => ({ ...f, subscriptionCans: e.target.value }))} required />
                 </div>
-                <div className="form-group" style={{ gridColumn: "1 / -1" }}>
+                <div className="form-group">
                   <label className="form-label" htmlFor="cCashPerCan">Cash Per Can (₹)</label>
                   <input id="cCashPerCan" className="form-input" type="number" min="0" step="0.01" value={formData.cashPerCan} onChange={(e) => setFormData((f) => ({ ...f, cashPerCan: e.target.value }))} placeholder="e.g. 50" />
+                </div>
+                <div className="form-group">
+                  <label className="form-label" htmlFor="cRegisteredDate">Added Date *</label>
+                  <input
+                    id="cRegisteredDate"
+                    className="form-input"
+                    type="date"
+                    value={formData.registeredDate}
+                    onChange={(e) => setFormData((f) => ({ ...f, registeredDate: e.target.value }))}
+                    required
+                  />
                 </div>
               </div>
               {formError && <div className="alert alert-error">{formError}</div>}
@@ -495,6 +518,14 @@ export default function CustomersPage() {
                 <div className="text-sm text-muted">Status</div>
                 <div style={{ fontWeight: 600, color: selectedCustomer.isActive ? "var(--accent-primary)" : "var(--text-muted)" }}>
                   {selectedCustomer.isActive ? "Active" : "Inactive"}
+                </div>
+              </div>
+              <div>
+                <div className="text-sm text-muted">Added Date</div>
+                <div style={{ fontWeight: 600 }}>
+                  {selectedCustomer.registeredDate
+                    ? new Date(selectedCustomer.registeredDate).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })
+                    : "—"}
                 </div>
               </div>
             </div>
@@ -574,6 +605,16 @@ export default function CustomersPage() {
               <div className="form-group">
                 <label className="form-label" htmlFor="eCashPerCan">Cash Per Can (₹)</label>
                 <input id="eCashPerCan" className="form-input" type="number" min="0" step="0.01" value={editData.cashPerCan} onChange={(e) => setEditData((d) => ({ ...d, cashPerCan: e.target.value }))} placeholder="e.g. 50" />
+              </div>
+              <div className="form-group">
+                <label className="form-label" htmlFor="eRegisteredDate">Added Date</label>
+                <input
+                  id="eRegisteredDate"
+                  className="form-input"
+                  type="date"
+                  value={editData.registeredDate}
+                  onChange={(e) => setEditData((d) => ({ ...d, registeredDate: e.target.value }))}
+                />
               </div>
               <div className="form-group" style={{ gridColumn: "1 / -1" }}>
                 <label className="form-label" htmlFor="eStatus">Status</label>
