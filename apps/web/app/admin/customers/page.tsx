@@ -14,6 +14,7 @@ interface Customer {
   subscriptionCans: number;
   cashPerCan?: number;
   isActive: boolean;
+  isDeleted?: boolean;
   registeredDate?: string;
   createdAt: string;
 }
@@ -324,13 +325,22 @@ export default function CustomersPage() {
                         <td>{customer.area ?? "-"}</td>
                         <td style={{ fontWeight: 700 }}>{customer.subscriptionCans}</td>
                         <td>
-                          <button
-                            type="button"
-                            className="btn btn-sm btn-secondary"
-                            onClick={() => openEdit(customer)}
-                          >
-                            Edit
-                          </button>
+                          <div style={{ display: "flex", gap: "0.4rem" }}>
+                            <button
+                              type="button"
+                              className="btn btn-sm btn-secondary"
+                              onClick={() => openEdit(customer)}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn-sm btn-danger"
+                              onClick={() => setConfirmDeleteCustomer(customer)}
+                            >
+                              Delete
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -374,13 +384,22 @@ export default function CustomersPage() {
                         <td>{customer.area ?? "-"}</td>
                         <td>{customer.subscriptionCans}</td>
                         <td>
-                          <button
-                            type="button"
-                            className="btn btn-sm btn-secondary"
-                            onClick={() => openEdit(customer)}
-                          >
-                            Edit
-                          </button>
+                          <div style={{ display: "flex", gap: "0.4rem" }}>
+                            <button
+                              type="button"
+                              className="btn btn-sm btn-secondary"
+                              onClick={() => openEdit(customer)}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn-sm btn-danger"
+                              onClick={() => setConfirmDeleteCustomer(customer)}
+                            >
+                              Delete
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -567,13 +586,16 @@ export default function CustomersPage() {
         >
           <div className="card" style={{ width: "100%", maxWidth: "400px" }} onClick={(e) => e.stopPropagation()}>
             <h3 style={{ marginBottom: "0.75rem" }}>Delete Customer?</h3>
+            <p style={{ color: "var(--text-secondary)", marginBottom: "0.75rem" }}>
+              <strong>{confirmDeleteCustomer.name}</strong> will be removed from your customer list.
+            </p>
             <p style={{ color: "var(--text-secondary)", marginBottom: "1.25rem" }}>
-              Permanently delete <strong>{confirmDeleteCustomer.name}</strong>? All their data will be removed. This cannot be undone.
+              Their delivery history will stay preserved and can still be viewed in the deliveries section.
             </p>
             <div style={{ display: "flex", gap: "0.75rem", justifyContent: "flex-end" }}>
               <button type="button" className="btn btn-secondary" onClick={() => setConfirmDeleteCustomer(null)}>Cancel</button>
               <button type="button" className="btn btn-danger" disabled={deletingCustomer} onClick={() => void doDeleteCustomer()}>
-                {deletingCustomer ? "Deleting..." : "Delete Permanently"}
+                {deletingCustomer ? "Deleting..." : "Delete Customer"}
               </button>
             </div>
           </div>

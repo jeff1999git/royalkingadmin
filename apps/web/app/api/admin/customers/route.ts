@@ -12,7 +12,7 @@ export async function GET() {
   }
 
   await connectToDatabase();
-  const customers = await Customer.find()
+  const customers = await Customer.find({ isDeleted: { $ne: true } })
     .sort({ isActive: -1, name: 1 })
     .lean();
 

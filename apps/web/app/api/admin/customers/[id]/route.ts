@@ -140,8 +140,12 @@ export async function DELETE(
   }
 
   await connectToDatabase();
-  const deleted = await Customer.findByIdAndDelete(id).lean();
-  if (!deleted) {
+  const updated = await Customer.findByIdAndUpdate(
+    id,
+    { $set: { isDeleted: true, isActive: false } },
+    { new: true }
+  ).lean();
+  if (!updated) {
     return NextResponse.json({ error: "Customer not found." }, { status: 404 });
   }
 
