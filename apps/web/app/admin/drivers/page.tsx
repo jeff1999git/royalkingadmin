@@ -37,6 +37,8 @@ export default function DriversPage() {
     const [editError, setEditError] = useState("");
     const [editSaving, setEditSaving] = useState(false);
     const [selectedDriver, setSelectedDriver] = useState<Driver | null>(null);
+    const [confirmDeleteDriver, setConfirmDeleteDriver] = useState<Driver | null>(null);
+    const [deletingDriver, setDeletingDriver] = useState(false);
 
     const { data: drivers, isLoading: isDriversLoading } = useAdminDrivers();
     const { data: vehicles } = useAdminVehicles();
@@ -145,12 +147,15 @@ export default function DriversPage() {
         setSelectedDriver(driver);
     }
 
-    async function deleteDriver(driver: Driver) {
-        const shouldDelete = window.confirm(`Permanently delete driver "${driver.name}"? This cannot be undone.`);
-        if (!shouldDelete) return;
+    async function doDeleteDriver() {
+        if (!confirmDeleteDriver) return;
+        const driver = confirmDeleteDriver;
+        setConfirmDeleteDriver(null);
+        setDeletingDriver(true);
         try {
             const res = await fetch(`/api/admin/drivers/${driver._id}`, { method: "DELETE" });
             const data = await safeParseJson(res);
+            setDeletingDriver(false);
             if (!res.ok) {
                 setFormError(data.error ?? "Failed to delete driver");
                 return;
@@ -159,6 +164,7 @@ export default function DriversPage() {
             setSelectedDriver(null);
             if (editingDriver?._id === driver._id) setEditingDriver(null);
         } catch {
+            setDeletingDriver(false);
             setFormError("Failed to delete driver. Please try again.");
         }
     }
@@ -413,9 +419,30 @@ export default function DriversPage() {
                             <button
                                 type="button"
                                 className="btn btn-danger"
-                                onClick={() => void deleteDriver(selectedDriver)}
+                                disabled={deletingDriver}
+                                onClick={() => setConfirmDeleteDriver(selectedDriver)}
                             >
                                 Delete
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {confirmDeleteDriver && (
+                <div
+                    style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem", zIndex: 400 }}
+                    onClick={() => setConfirmDeleteDriver(null)}
+                >
+                    <div className="card" style={{ width: "100%", maxWidth: "400px" }} onClick={(e) => e.stopPropagation()}>
+                        <h3 style={{ marginBottom: "0.75rem" }}>Delete Driver?</h3>
+                        <p style={{ color: "var(--text-secondary)", marginBottom: "1.25rem" }}>
+                            Permanently delete driver <strong>{confirmDeleteDriver.name}</strong> (@{confirmDeleteDriver.username})? This cannot be undone.
+                        </p>
+                        <div style={{ display: "flex", gap: "0.75rem", justifyContent: "flex-end" }}>
+                            <button type="button" className="btn btn-secondary" onClick={() => setConfirmDeleteDriver(null)}>Cancel</button>
+                            <button type="button" className="btn btn-danger" disabled={deletingDriver} onClick={() => void doDeleteDriver()}>
+                                {deletingDriver ? "Deleting..." : "Delete Permanently"}
                             </button>
                         </div>
                     </div>

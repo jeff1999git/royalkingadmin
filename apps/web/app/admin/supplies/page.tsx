@@ -148,6 +148,7 @@ export default function SuppliesPage() {
   const [editingCansTakenBack, setEditingCansTakenBack] = useState("");
   const [editSaving, setEditSaving] = useState(false);
   const [deleteSaving, setDeleteSaving] = useState(false);
+  const [confirmDeleteLog, setConfirmDeleteLog] = useState<SupplyLog | null>(null);
 
   const [showAddForm, setShowAddForm] = useState(false);
   const [addData, setAddData] = useState({
@@ -680,10 +681,10 @@ export default function SuppliesPage() {
     }
   }
 
-  async function deleteSupplyLog(log: SupplyLog) {
-    const confirmed = window.confirm("Permanently delete this supply log? This cannot be undone.");
-    if (!confirmed) return;
-
+  async function doDeleteSupplyLog() {
+    if (!confirmDeleteLog) return;
+    const log = confirmDeleteLog;
+    setConfirmDeleteLog(null);
     setDeleteSaving(true);
     try {
       const res = await fetch(`/api/admin/supplies/${log._id}`, { method: "DELETE" });
@@ -1316,7 +1317,7 @@ export default function SuppliesPage() {
                 type="button"
                 className="btn btn-danger"
                 disabled={deleteSaving}
-                onClick={() => void deleteSupplyLog(selectedLog)}
+                onClick={() => setConfirmDeleteLog(selectedLog)}
               >
                 {deleteSaving ? "Deleting..." : "Delete"}
               </button>
@@ -1375,6 +1376,28 @@ export default function SuppliesPage() {
               alt="Fuel bill detailed preview"
               style={{ width: "100%", maxHeight: "75vh", objectFit: "contain", borderRadius: "10px", border: "1px solid var(--border)" }}
             />
+          </div>
+        </div>
+      )}
+
+      {confirmDeleteLog && (
+        <div
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem", zIndex: 400 }}
+          onClick={() => setConfirmDeleteLog(null)}
+        >
+          <div className="card" style={{ width: "100%", maxWidth: "400px" }} onClick={(e) => e.stopPropagation()}>
+            <h3 style={{ marginBottom: "0.75rem" }}>Delete Log?</h3>
+            <p style={{ color: "var(--text-secondary)", marginBottom: "1.25rem" }}>
+              Permanently delete the {confirmDeleteLog.logType === "cash" ? "cash credit" : "delivery"} log for{" "}
+              <strong>{confirmDeleteLog.customer?.name ?? confirmDeleteLog.pointName ?? "this entry"}</strong>{" "}
+              on {formatDateTime(confirmDeleteLog.suppliedAt)}? This cannot be undone.
+            </p>
+            <div style={{ display: "flex", gap: "0.75rem", justifyContent: "flex-end" }}>
+              <button type="button" className="btn btn-secondary" onClick={() => setConfirmDeleteLog(null)}>Cancel</button>
+              <button type="button" className="btn btn-danger" disabled={deleteSaving} onClick={() => void doDeleteSupplyLog()}>
+                {deleteSaving ? "Deleting..." : "Delete Permanently"}
+              </button>
+            </div>
           </div>
         </div>
       )}

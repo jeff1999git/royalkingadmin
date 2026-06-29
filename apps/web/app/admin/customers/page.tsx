@@ -82,6 +82,8 @@ export default function CustomersPage() {
   const [editSaving, setEditSaving] = useState(false);
 
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const [confirmDeleteCustomer, setConfirmDeleteCustomer] = useState<Customer | null>(null);
+  const [deletingCustomer, setDeletingCustomer] = useState(false);
   const [pageError, setPageError] = useState("");
   const [searchText, setSearchText] = useState("");
   const [filterArea, setFilterArea] = useState("");
@@ -177,16 +179,20 @@ export default function CustomersPage() {
     }
   }
 
-  async function deleteCustomer(customer: Customer) {
-    const confirmed = window.confirm(`Delete customer "${customer.name}"? This cannot be undone.`);
-    if (!confirmed) return;
+  async function doDeleteCustomer() {
+    if (!confirmDeleteCustomer) return;
+    const customer = confirmDeleteCustomer;
+    setConfirmDeleteCustomer(null);
+    setDeletingCustomer(true);
     setPageError("");
     try {
       const res = await fetch(`/api/admin/customers/${customer._id}`, { method: "DELETE" });
+      setDeletingCustomer(false);
       if (!res.ok) { setPageError("Failed to delete customer."); return; }
       setSelectedCustomer(null);
       await queryClient.invalidateQueries({ queryKey: CUSTOMERS_KEY });
     } catch {
+      setDeletingCustomer(false);
       setPageError("Failed to delete customer. Please try again.");
     }
   }
@@ -537,7 +543,8 @@ export default function CustomersPage() {
               <button
                 type="button"
                 className="btn btn-danger"
-                onClick={() => void deleteCustomer(selectedCustomer)}
+                disabled={deletingCustomer}
+                onClick={() => setConfirmDeleteCustomer(selectedCustomer)}
               >
                 Delete
               </button>
@@ -547,6 +554,26 @@ export default function CustomersPage() {
                 onClick={() => openEdit(selectedCustomer)}
               >
                 Edit
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmDeleteCustomer && (
+        <div
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem", zIndex: 400 }}
+          onClick={() => setConfirmDeleteCustomer(null)}
+        >
+          <div className="card" style={{ width: "100%", maxWidth: "400px" }} onClick={(e) => e.stopPropagation()}>
+            <h3 style={{ marginBottom: "0.75rem" }}>Delete Customer?</h3>
+            <p style={{ color: "var(--text-secondary)", marginBottom: "1.25rem" }}>
+              Permanently delete <strong>{confirmDeleteCustomer.name}</strong>? All their data will be removed. This cannot be undone.
+            </p>
+            <div style={{ display: "flex", gap: "0.75rem", justifyContent: "flex-end" }}>
+              <button type="button" className="btn btn-secondary" onClick={() => setConfirmDeleteCustomer(null)}>Cancel</button>
+              <button type="button" className="btn btn-danger" disabled={deletingCustomer} onClick={() => void doDeleteCustomer()}>
+                {deletingCustomer ? "Deleting..." : "Delete Permanently"}
               </button>
             </div>
           </div>
