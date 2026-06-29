@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   useAdminAddedSupplies,
   useAdminCashCredits,
+  useAdminCustomers,
   useAdminDrivers,
   useAdminQueryClient,
 } from "../../hooks/useAdminQueries";
@@ -148,7 +149,21 @@ export default function SuppliesPage() {
   const [editSaving, setEditSaving] = useState(false);
   const [deleteSaving, setDeleteSaving] = useState(false);
 
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [addData, setAddData] = useState({
+    driverId: "",
+    customerId: "",
+    suppliedAt: todayInputValue(),
+    cansDelivered: "",
+    cansTakenBack: "",
+    amount: "",
+    notes: "",
+  });
+  const [addError, setAddError] = useState("");
+  const [addSubmitting, setAddSubmitting] = useState(false);
+
   const { data: driverOptions } = useAdminDrivers();
+  const { data: customerOptions } = useAdminCustomers();
   const {
     data: queriedLogs,
     isLoading: logsLoading,
@@ -546,6 +561,56 @@ export default function SuppliesPage() {
     setFilters({ date: "", month: maxMonth, driver: "", vehicle: "" });
   }
 
+  function openAddForm() {
+    setAddData({
+      driverId: "",
+      customerId: "",
+      suppliedAt: todayInputValue(),
+      cansDelivered: "",
+      cansTakenBack: "",
+      amount: "",
+      notes: "",
+    });
+    setAddError("");
+    setShowAddForm(true);
+  }
+
+  async function handleAddDelivery() {
+    setAddError("");
+    if (!addData.driverId) { setAddError("Please select a driver."); return; }
+    if (!addData.customerId) { setAddError("Please select a customer."); return; }
+    if (!addData.suppliedAt) { setAddError("Please enter a delivery date."); return; }
+    if (!addData.cansDelivered && !addData.cansTakenBack) {
+      setAddError("Enter cans delivered, cans taken back, or both.");
+      return;
+    }
+    setAddSubmitting(true);
+    try {
+      const res = await fetch("/api/admin/supplies", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          logType: "water",
+          driverId: addData.driverId,
+          customerId: addData.customerId,
+          suppliedAt: addData.suppliedAt,
+          cansDelivered: addData.cansDelivered !== "" ? Number(addData.cansDelivered) : undefined,
+          cansTakenBack: addData.cansTakenBack !== "" ? Number(addData.cansTakenBack) : undefined,
+          amount: addData.amount !== "" ? Number(addData.amount) : undefined,
+          notes: addData.notes || undefined,
+        }),
+      });
+      const data = (await res.json()) as { error?: string };
+      setAddSubmitting(false);
+      if (!res.ok) { setAddError(data.error ?? "Failed to create delivery."); return; }
+      setShowAddForm(false);
+      await queryClient.invalidateQueries({ queryKey: ["admin", "supplies"] });
+    } catch {
+      setAddSubmitting(false);
+      setAddError("Failed to create delivery.");
+    }
+  }
+
   function openEditModal(log: SupplyLog) {
     setEditingLog(log);
     setEditingAmount(log.amount !== undefined ? String(log.amount) : "");
@@ -695,7 +760,12 @@ export default function SuppliesPage() {
               </button>
             </div>
           </div>
-          <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", marginTop: "0.75rem" }}>
+          <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", marginTop: "0.75rem", alignItems: "center" }}>
+            {supplyTab === "water" && (
+              <button type="button" className="btn btn-primary btn-sm" onClick={openAddForm}>
+                + Add Delivery
+              </button>
+            )}
             <button type="button" className="btn btn-secondary btn-sm" onClick={() => void handleDownloadImage()}>
               Download Photo
             </button>
@@ -961,6 +1031,133 @@ export default function SuppliesPage() {
               }
             >
               Next
+            </button>
+          </div>
+        </div>
+      )}
+
+      {showAddForm && (
+        <div
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem", zIndex: 250 }}
+          onClick={() => setShowAddForm(false)}
+        >
+          <div
+            className="card"
+            style={{ width: "100%", maxWidth: "520px", maxHeight: "90vh", overflowY: "auto" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between" style={{ marginBottom: "1rem" }}>
+              <h3>Add Delivery</h3>
+              <button type="button" className="btn btn-sm btn-secondary" onClick={() => setShowAddForm(false)}>Close</button>
+            </div>
+
+            <div className="grid-2" style={{ marginBottom: "1rem" }}>
+              <div className="form-group" style={{ gridColumn: "1 / -1" }}>
+                <label className="form-label" htmlFor="addSuppliedAt">Delivery Date *</label>
+                <input
+                  id="addSuppliedAt"
+                  className="form-input"
+                  type="date"
+                  max={todayInputValue()}
+                  value={addData.suppliedAt}
+                  onChange={(e) => setAddData((d) => ({ ...d, suppliedAt: e.target.value }))}
+                  required
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label" htmlFor="addDriver">Driver *</label>
+                <select
+                  id="addDriver"
+                  className="form-select"
+                  value={addData.driverId}
+                  onChange={(e) => setAddData((d) => ({ ...d, driverId: e.target.value }))}
+                >
+                  <option value="">Select Driver</option>
+                  {(driverOptions ?? []).map((dr) => (
+                    <option key={dr._id} value={dr._id}>{dr.name} (@{dr.username})</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label" htmlFor="addCustomer">Customer *</label>
+                <select
+                  id="addCustomer"
+                  className="form-select"
+                  value={addData.customerId}
+                  onChange={(e) => setAddData((d) => ({ ...d, customerId: e.target.value }))}
+                >
+                  <option value="">Select Customer</option>
+                  {(customerOptions ?? []).filter((c) => c.isActive).map((c) => (
+                    <option key={c._id} value={c._id}>{c.name}{c.area ? ` — ${c.area}` : ""}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label" htmlFor="addCansDelivered">Cans Delivered</label>
+                <input
+                  id="addCansDelivered"
+                  className="form-input"
+                  type="number"
+                  min="0"
+                  step="1"
+                  placeholder="e.g. 2"
+                  value={addData.cansDelivered}
+                  onChange={(e) => setAddData((d) => ({ ...d, cansDelivered: e.target.value }))}
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label" htmlFor="addCansTakenBack">Cans Taken Back</label>
+                <input
+                  id="addCansTakenBack"
+                  className="form-input"
+                  type="number"
+                  min="0"
+                  step="1"
+                  placeholder="e.g. 0"
+                  value={addData.cansTakenBack}
+                  onChange={(e) => setAddData((d) => ({ ...d, cansTakenBack: e.target.value }))}
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label" htmlFor="addAmount">Amount (₹) — auto-calculated if blank</label>
+                <input
+                  id="addAmount"
+                  className="form-input"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder="Leave blank to auto-calculate"
+                  value={addData.amount}
+                  onChange={(e) => setAddData((d) => ({ ...d, amount: e.target.value }))}
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label" htmlFor="addNotes">Notes (Optional)</label>
+                <input
+                  id="addNotes"
+                  className="form-input"
+                  placeholder="Optional notes"
+                  value={addData.notes}
+                  onChange={(e) => setAddData((d) => ({ ...d, notes: e.target.value }))}
+                />
+              </div>
+            </div>
+
+            {addError && <div className="alert alert-error" style={{ marginBottom: "0.75rem" }}>{addError}</div>}
+
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={addSubmitting}
+              onClick={() => void handleAddDelivery()}
+            >
+              {addSubmitting ? "Saving..." : "Add Delivery"}
             </button>
           </div>
         </div>
