@@ -31,6 +31,7 @@ export async function PATCH(
     cansDelivered?: number | string;
     cansTakenBack?: number | string;
     cashType?: "debit" | "fuel";
+    paymentStatus?: "cash" | "upi" | "not_paid";
   };
   const amountValue =
     body.amount === undefined || body.amount === null || body.amount === ""
@@ -78,6 +79,11 @@ export async function PATCH(
     }
   }
 
+  const paymentStatus = body.paymentStatus;
+  if (paymentStatus !== undefined && paymentStatus !== "cash" && paymentStatus !== "upi" && paymentStatus !== "not_paid") {
+    return NextResponse.json({ error: "Invalid payment status." }, { status: 400 });
+  }
+
   const setPayload: {
     amount?: number;
     adminRemark?: string;
@@ -87,6 +93,7 @@ export async function PATCH(
     cansDelivered?: number;
     cansTakenBack?: number;
     cashType?: "debit" | "fuel";
+    paymentStatus?: "cash" | "upi" | "not_paid";
   } = {};
   if (amountValue !== undefined) setPayload.amount = amountValue;
   if (adminRemark !== undefined) setPayload.adminRemark = adminRemark;
@@ -108,6 +115,7 @@ export async function PATCH(
   }
   if (cansTakenBack !== undefined) setPayload.cansTakenBack = cansTakenBack;
   if (cashType !== undefined) setPayload.cashType = cashType;
+  if (paymentStatus !== undefined) setPayload.paymentStatus = paymentStatus;
 
   if (Object.keys(setPayload).length === 0) {
     return NextResponse.json({ error: "Nothing to update." }, { status: 400 });

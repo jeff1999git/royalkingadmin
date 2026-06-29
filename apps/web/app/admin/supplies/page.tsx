@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   useAdminAddedSupplies,
   useAdminCashCredits,
+  useAdminCustomers,
   useAdminDrivers,
   useAdminQueryClient,
 } from "../../hooks/useAdminQueries";
@@ -26,6 +27,7 @@ interface SupplyLog {
   amount?: number;
   logType?: "water" | "cash";
   cashType?: "debit" | "fuel";
+  paymentStatus?: "cash" | "upi" | "not_paid";
   adminRemark?: string;
   billImageUrl?: string;
   billImagePublicId?: string;
@@ -145,10 +147,26 @@ export default function SuppliesPage() {
   const [editingDriverRemark, setEditingDriverRemark] = useState("");
   const [editingCansDelivered, setEditingCansDelivered] = useState("");
   const [editingCansTakenBack, setEditingCansTakenBack] = useState("");
+  const [editingPaymentStatus, setEditingPaymentStatus] = useState<"cash" | "upi" | "not_paid">("cash");
   const [editSaving, setEditSaving] = useState(false);
   const [deleteSaving, setDeleteSaving] = useState(false);
+  const [confirmDeleteLog, setConfirmDeleteLog] = useState<SupplyLog | null>(null);
+
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [addData, setAddData] = useState({
+    driverId: "",
+    customerId: "",
+    suppliedAt: todayInputValue(),
+    cansDelivered: "",
+    cansTakenBack: "",
+    amount: "",
+    notes: "",
+  });
+  const [addError, setAddError] = useState("");
+  const [addSubmitting, setAddSubmitting] = useState(false);
 
   const { data: driverOptions } = useAdminDrivers();
+  const { data: customerOptions } = useAdminCustomers();
   const {
     data: queriedLogs,
     isLoading: logsLoading,
@@ -546,6 +564,56 @@ export default function SuppliesPage() {
     setFilters({ date: "", month: maxMonth, driver: "", vehicle: "" });
   }
 
+  function openAddForm() {
+    setAddData({
+      driverId: "",
+      customerId: "",
+      suppliedAt: todayInputValue(),
+      cansDelivered: "",
+      cansTakenBack: "",
+      amount: "",
+      notes: "",
+    });
+    setAddError("");
+    setShowAddForm(true);
+  }
+
+  async function handleAddDelivery() {
+    setAddError("");
+    if (!addData.driverId) { setAddError("Please select a driver."); return; }
+    if (!addData.customerId) { setAddError("Please select a customer."); return; }
+    if (!addData.suppliedAt) { setAddError("Please enter a delivery date."); return; }
+    if (!addData.cansDelivered && !addData.cansTakenBack) {
+      setAddError("Enter cans delivered, cans taken back, or both.");
+      return;
+    }
+    setAddSubmitting(true);
+    try {
+      const res = await fetch("/api/admin/supplies", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          logType: "water",
+          driverId: addData.driverId,
+          customerId: addData.customerId,
+          suppliedAt: addData.suppliedAt,
+          cansDelivered: addData.cansDelivered !== "" ? Number(addData.cansDelivered) : undefined,
+          cansTakenBack: addData.cansTakenBack !== "" ? Number(addData.cansTakenBack) : undefined,
+          amount: addData.amount !== "" ? Number(addData.amount) : undefined,
+          notes: addData.notes || undefined,
+        }),
+      });
+      const data = (await res.json()) as { error?: string };
+      setAddSubmitting(false);
+      if (!res.ok) { setAddError(data.error ?? "Failed to create delivery."); return; }
+      setShowAddForm(false);
+      await queryClient.invalidateQueries({ queryKey: ["admin", "supplies"] });
+    } catch {
+      setAddSubmitting(false);
+      setAddError("Failed to create delivery.");
+    }
+  }
+
   function openEditModal(log: SupplyLog) {
     setEditingLog(log);
     setEditingAmount(log.amount !== undefined ? String(log.amount) : "");
@@ -554,6 +622,8 @@ export default function SuppliesPage() {
     setEditingDriverRemark(log.notes ?? "");
     setEditingCansDelivered(log.cansDelivered !== undefined ? String(log.cansDelivered) : "");
     setEditingCansTakenBack(log.cansTakenBack !== undefined ? String(log.cansTakenBack) : "");
+    const ps = log.paymentStatus;
+    setEditingPaymentStatus(ps === "upi" || ps === "not_paid" ? ps : "cash");
     setError("");
   }
 
@@ -582,6 +652,7 @@ export default function SuppliesPage() {
                 cansTakenBack: editingCansTakenBack !== "" ? Number(editingCansTakenBack) : undefined,
                 notes: editingDriverRemark,
                 adminRemark: editingRemark,
+                paymentStatus: editingPaymentStatus,
               }
         ),
       });
@@ -615,10 +686,10 @@ export default function SuppliesPage() {
     }
   }
 
-  async function deleteSupplyLog(log: SupplyLog) {
-    const confirmed = window.confirm("Permanently delete this supply log? This cannot be undone.");
-    if (!confirmed) return;
-
+  async function doDeleteSupplyLog() {
+    if (!confirmDeleteLog) return;
+    const log = confirmDeleteLog;
+    setConfirmDeleteLog(null);
     setDeleteSaving(true);
     try {
       const res = await fetch(`/api/admin/supplies/${log._id}`, { method: "DELETE" });
@@ -695,7 +766,12 @@ export default function SuppliesPage() {
               </button>
             </div>
           </div>
-          <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", marginTop: "0.75rem" }}>
+          <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", marginTop: "0.75rem", alignItems: "center" }}>
+            {supplyTab === "water" && (
+              <button type="button" className="btn btn-primary btn-sm" onClick={openAddForm}>
+                + Add Delivery
+              </button>
+            )}
             <button type="button" className="btn btn-secondary btn-sm" onClick={() => void handleDownloadImage()}>
               Download Photo
             </button>
@@ -910,7 +986,18 @@ export default function SuppliesPage() {
                             }}
                             style={{ cursor: "pointer" }}
                           >
-                            {log.amount !== undefined ? log.amount : "-"}
+                            <div>{log.amount !== undefined ? log.amount : "-"}</div>
+                            {(() => {
+                              const ps = log.paymentStatus;
+                              const label = !ps || ps === "cash" ? "Cash" : ps === "upi" ? "UPI" : "Not Paid";
+                              const bg = !ps || ps === "cash" ? "#e8f5e9" : ps === "upi" ? "#e3f2fd" : "#fff3e0";
+                              const color = !ps || ps === "cash" ? "#2e7d32" : ps === "upi" ? "#1565c0" : "#e65100";
+                              return (
+                                <span style={{ fontSize: "0.72rem", fontWeight: 700, padding: "0.1rem 0.45rem", borderRadius: "99px", background: bg, color }}>
+                                  {label}
+                                </span>
+                              );
+                            })()}
                           </td>
                         )}
                         <td
@@ -961,6 +1048,133 @@ export default function SuppliesPage() {
               }
             >
               Next
+            </button>
+          </div>
+        </div>
+      )}
+
+      {showAddForm && (
+        <div
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem", zIndex: 250 }}
+          onClick={() => setShowAddForm(false)}
+        >
+          <div
+            className="card"
+            style={{ width: "100%", maxWidth: "520px", maxHeight: "90vh", overflowY: "auto" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between" style={{ marginBottom: "1rem" }}>
+              <h3>Add Delivery</h3>
+              <button type="button" className="btn btn-sm btn-secondary" onClick={() => setShowAddForm(false)}>Close</button>
+            </div>
+
+            <div className="grid-2" style={{ marginBottom: "1rem" }}>
+              <div className="form-group" style={{ gridColumn: "1 / -1" }}>
+                <label className="form-label" htmlFor="addSuppliedAt">Delivery Date *</label>
+                <input
+                  id="addSuppliedAt"
+                  className="form-input"
+                  type="date"
+                  max={todayInputValue()}
+                  value={addData.suppliedAt}
+                  onChange={(e) => setAddData((d) => ({ ...d, suppliedAt: e.target.value }))}
+                  required
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label" htmlFor="addDriver">Driver *</label>
+                <select
+                  id="addDriver"
+                  className="form-select"
+                  value={addData.driverId}
+                  onChange={(e) => setAddData((d) => ({ ...d, driverId: e.target.value }))}
+                >
+                  <option value="">Select Driver</option>
+                  {(driverOptions ?? []).map((dr) => (
+                    <option key={dr._id} value={dr._id}>{dr.name} (@{dr.username})</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label" htmlFor="addCustomer">Customer *</label>
+                <select
+                  id="addCustomer"
+                  className="form-select"
+                  value={addData.customerId}
+                  onChange={(e) => setAddData((d) => ({ ...d, customerId: e.target.value }))}
+                >
+                  <option value="">Select Customer</option>
+                  {(customerOptions ?? []).filter((c) => c.isActive).map((c) => (
+                    <option key={c._id} value={c._id}>{c.name}{c.area ? ` — ${c.area}` : ""}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label" htmlFor="addCansDelivered">Cans Delivered</label>
+                <input
+                  id="addCansDelivered"
+                  className="form-input"
+                  type="number"
+                  min="0"
+                  step="1"
+                  placeholder="e.g. 2"
+                  value={addData.cansDelivered}
+                  onChange={(e) => setAddData((d) => ({ ...d, cansDelivered: e.target.value }))}
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label" htmlFor="addCansTakenBack">Cans Taken Back</label>
+                <input
+                  id="addCansTakenBack"
+                  className="form-input"
+                  type="number"
+                  min="0"
+                  step="1"
+                  placeholder="e.g. 0"
+                  value={addData.cansTakenBack}
+                  onChange={(e) => setAddData((d) => ({ ...d, cansTakenBack: e.target.value }))}
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label" htmlFor="addAmount">Amount (₹) — auto-calculated if blank</label>
+                <input
+                  id="addAmount"
+                  className="form-input"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder="Leave blank to auto-calculate"
+                  value={addData.amount}
+                  onChange={(e) => setAddData((d) => ({ ...d, amount: e.target.value }))}
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label" htmlFor="addNotes">Notes (Optional)</label>
+                <input
+                  id="addNotes"
+                  className="form-input"
+                  placeholder="Optional notes"
+                  value={addData.notes}
+                  onChange={(e) => setAddData((d) => ({ ...d, notes: e.target.value }))}
+                />
+              </div>
+            </div>
+
+            {addError && <div className="alert alert-error" style={{ marginBottom: "0.75rem" }}>{addError}</div>}
+
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={addSubmitting}
+              onClick={() => void handleAddDelivery()}
+            >
+              {addSubmitting ? "Saving..." : "Add Delivery"}
             </button>
           </div>
         </div>
@@ -1092,6 +1306,19 @@ export default function SuppliesPage() {
                   <div style={{ fontWeight: 600 }}>{selectedLog.amount}</div>
                 </div>
               )}
+              {selectedLog.logType !== "cash" && (
+                <div>
+                  <div className="text-sm text-muted">Payment Status</div>
+                  <div style={{
+                    display: "inline-block", fontWeight: 700, fontSize: "0.82rem",
+                    padding: "0.18rem 0.6rem", borderRadius: "99px",
+                    background: !selectedLog.paymentStatus || selectedLog.paymentStatus === "cash" ? "#e8f5e9" : selectedLog.paymentStatus === "upi" ? "#e3f2fd" : "#fff3e0",
+                    color: !selectedLog.paymentStatus || selectedLog.paymentStatus === "cash" ? "#2e7d32" : selectedLog.paymentStatus === "upi" ? "#1565c0" : "#e65100",
+                  }}>
+                    {!selectedLog.paymentStatus || selectedLog.paymentStatus === "cash" ? "Cash" : selectedLog.paymentStatus === "upi" ? "UPI" : "Not Paid"}
+                  </div>
+                </div>
+              )}
               {selectedLog.adminRemark && (
                 <div>
                   <div className="text-sm text-muted">Admin Remark</div>
@@ -1119,7 +1346,7 @@ export default function SuppliesPage() {
                 type="button"
                 className="btn btn-danger"
                 disabled={deleteSaving}
-                onClick={() => void deleteSupplyLog(selectedLog)}
+                onClick={() => setConfirmDeleteLog(selectedLog)}
               >
                 {deleteSaving ? "Deleting..." : "Delete"}
               </button>
@@ -1182,6 +1409,28 @@ export default function SuppliesPage() {
         </div>
       )}
 
+      {confirmDeleteLog && (
+        <div
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem", zIndex: 400 }}
+          onClick={() => setConfirmDeleteLog(null)}
+        >
+          <div className="card" style={{ width: "100%", maxWidth: "400px" }} onClick={(e) => e.stopPropagation()}>
+            <h3 style={{ marginBottom: "0.75rem" }}>Delete Log?</h3>
+            <p style={{ color: "var(--text-secondary)", marginBottom: "1.25rem" }}>
+              Permanently delete the {confirmDeleteLog.logType === "cash" ? "cash credit" : "delivery"} log for{" "}
+              <strong>{confirmDeleteLog.customer?.name ?? confirmDeleteLog.pointName ?? "this entry"}</strong>{" "}
+              on {formatDateTime(confirmDeleteLog.suppliedAt)}? This cannot be undone.
+            </p>
+            <div style={{ display: "flex", gap: "0.75rem", justifyContent: "flex-end" }}>
+              <button type="button" className="btn btn-secondary" onClick={() => setConfirmDeleteLog(null)}>Cancel</button>
+              <button type="button" className="btn btn-danger" disabled={deleteSaving} onClick={() => void doDeleteSupplyLog()}>
+                {deleteSaving ? "Deleting..." : "Delete Permanently"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {editingLog && (
         <div
           style={{
@@ -1233,6 +1482,23 @@ export default function SuppliesPage() {
                     value={editingCansTakenBack}
                     onChange={(e) => setEditingCansTakenBack(e.target.value)}
                   />
+                </div>
+                <div className="form-group" style={{ marginBottom: "0.75rem" }}>
+                  <label className="form-label">Payment Status</label>
+                  <div style={{ display: "flex", gap: "1rem", marginTop: "0.4rem", flexWrap: "wrap" }}>
+                    {(["cash", "upi", "not_paid"] as const).map((ps) => (
+                      <label key={ps} style={{ display: "flex", alignItems: "center", gap: "0.4rem", cursor: "pointer", fontWeight: editingPaymentStatus === ps ? 700 : 500 }}>
+                        <input
+                          type="radio"
+                          name="editPaymentStatus"
+                          value={ps}
+                          checked={editingPaymentStatus === ps}
+                          onChange={() => setEditingPaymentStatus(ps)}
+                        />
+                        {ps === "cash" ? "Cash" : ps === "upi" ? "UPI" : "Not Paid"}
+                      </label>
+                    ))}
+                  </div>
                 </div>
                 <div className="form-group" style={{ marginBottom: "0.75rem" }}>
                   <label className="form-label" htmlFor="editDriverNote">Driver Notes (Optional)</label>

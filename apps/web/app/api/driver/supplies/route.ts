@@ -16,6 +16,7 @@ type DriverSupplyRequestBody = {
   notes?: string;
   amount?: number | string;
   cashType?: "debit" | "fuel";
+  paymentStatus?: "cash" | "upi" | "not_paid";
   billImageFile?: File | null;
 };
 
@@ -155,6 +156,7 @@ export async function POST(req: NextRequest) {
       cansDelivered?: number;
       cansTakenBack?: number;
       amount?: number;
+      paymentStatus?: "cash" | "upi" | "not_paid";
       cashType?: "debit" | "fuel";
       billImageUrl?: string;
       billImagePublicId?: string;
@@ -171,6 +173,8 @@ export async function POST(req: NextRequest) {
       if (cansTakenBack !== undefined) payload.cansTakenBack = cansTakenBack;
       if (vehicleId) payload.vehicle = vehicleId;
       if (calculatedAmount !== undefined) payload.amount = calculatedAmount;
+      const ps = body.paymentStatus;
+      payload.paymentStatus = ps === "upi" || ps === "not_paid" ? ps : "cash";
     } else {
       payload.amount = amountValue;
       payload.cashType = cashType;

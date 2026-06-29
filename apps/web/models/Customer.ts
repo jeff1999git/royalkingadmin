@@ -9,7 +9,9 @@ export interface CustomerDocument {
   locationType?: "home" | "office" | "both";
   subscriptionCans: number;
   cashPerCan?: number;
+  securityDeposit?: number;
   isActive: boolean;
+  isDeleted: boolean;
   registeredDate: Date;
   createdBy?: Types.ObjectId;
   createdAt: Date;
@@ -26,7 +28,9 @@ const CustomerSchema = new Schema<CustomerDocument>(
     locationType: { type: String, enum: ["home", "office", "both"] },
     subscriptionCans: { type: Number, default: 1, min: 1 },
     cashPerCan: { type: Number, min: 0 },
+    securityDeposit: { type: Number, min: 0 },
     isActive: { type: Boolean, default: true },
+    isDeleted: { type: Boolean, default: false },
     registeredDate: { type: Date, default: () => new Date() },
     createdBy: { type: Schema.Types.ObjectId, ref: "User" },
   },

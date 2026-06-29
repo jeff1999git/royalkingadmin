@@ -22,6 +22,16 @@ export default function DriverLayout({ children }: { children: ReactNode }) {
     const [historyLoading, setHistoryLoading] = useState(false);
     const [odometerFilledToday, setOdometerFilledToday] = useState(false);
 
+    // Stock modal state
+    const [stockOpen, setStockOpen] = useState(false);
+    const [stockLoading, setStockLoading] = useState(false);
+    const [stockSaving, setStockSaving] = useState(false);
+    const [stockError, setStockError] = useState("");
+    const [stockSuccess, setStockSuccess] = useState("");
+    const [stockValues, setStockValues] = useState({ cans: 0, dispensers: 0, stands: 0 });
+    const [stockUpdatedBy, setStockUpdatedBy] = useState<string | null>(null);
+    const [stockUpdatedAt, setStockUpdatedAt] = useState<string | null>(null);
+
     const dropdownRef = useRef<HTMLDivElement>(null);
 
     const driverName = session?.user?.name ?? "";
@@ -58,6 +68,51 @@ export default function DriverLayout({ children }: { children: ReactNode }) {
         document.addEventListener("mousedown", handler);
         return () => document.removeEventListener("mousedown", handler);
     }, []);
+
+    async function openStockModal() {
+        setStockOpen(true);
+        setStockLoading(true);
+        setStockError("");
+        setStockSuccess("");
+        try {
+            const res = await fetch("/api/stock", { cache: "no-store" });
+            const data = (await res.json()) as { cans?: number; dispensers?: number; stands?: number; updatedBy?: string; updatedAt?: string };
+            setStockValues({ cans: data.cans ?? 0, dispensers: data.dispensers ?? 0, stands: data.stands ?? 0 });
+            setStockUpdatedBy(data.updatedBy ?? null);
+            setStockUpdatedAt(data.updatedAt ?? null);
+        } catch {
+            setStockError("Failed to load stock.");
+        } finally {
+            setStockLoading(false);
+        }
+    }
+
+    async function saveStock() {
+        setStockSaving(true);
+        setStockError("");
+        setStockSuccess("");
+        try {
+            const res = await fetch("/api/stock", {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(stockValues),
+            });
+            const data = (await res.json()) as { cans?: number; dispensers?: number; stands?: number; updatedBy?: string; updatedAt?: string; error?: string };
+            if (!res.ok) {
+                setStockError(data.error ?? "Failed to save stock.");
+            } else {
+                setStockValues({ cans: data.cans ?? 0, dispensers: data.dispensers ?? 0, stands: data.stands ?? 0 });
+                setStockUpdatedBy(data.updatedBy ?? null);
+                setStockUpdatedAt(data.updatedAt ?? null);
+                setStockSuccess("Stock updated.");
+                setTimeout(() => setStockSuccess(""), 2500);
+            }
+        } catch {
+            setStockError("Failed to save stock.");
+        } finally {
+            setStockSaving(false);
+        }
+    }
 
     async function handleSignOut() {
         await signOut({ redirect: false });
@@ -210,6 +265,27 @@ export default function DriverLayout({ children }: { children: ReactNode }) {
                                 Odometer
                             </button>
 
+                            {/* Stock option */}
+                            <button
+                                type="button"
+                                onClick={() => { setDropdownOpen(false); void openStockModal(); }}
+                                style={{
+                                    display: "flex", alignItems: "center", gap: "0.6rem",
+                                    width: "100%", padding: "0.7rem 1rem",
+                                    border: "none", borderBottom: "1px solid var(--border)",
+                                    background: "transparent", cursor: "pointer",
+                                    fontSize: "0.88rem", fontWeight: 600, color: "var(--text-primary)",
+                                    textAlign: "left",
+                                }}
+                            >
+                                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                    <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                                    <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
+                                    <line x1="12" y1="22.08" x2="12" y2="12" />
+                                </svg>
+                                Stock
+                            </button>
+
                             {/* Sign out option */}
                             <button
                                 type="button"
@@ -244,6 +320,79 @@ export default function DriverLayout({ children }: { children: ReactNode }) {
             }}>
                 {children}
             </main>
+
+            {/* Stock modal */}
+            {stockOpen && (
+                <div
+                    style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem", zIndex: 300 }}
+                    onClick={() => { setStockOpen(false); setStockError(""); setStockSuccess(""); }}
+                >
+                    <div className="card" style={{ width: "100%", maxWidth: "360px" }} onClick={(e) => e.stopPropagation()}>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1.25rem" }}>
+                            <h3 style={{ margin: 0 }}>Stock</h3>
+                            <button type="button" className="btn btn-sm btn-secondary" onClick={() => { setStockOpen(false); setStockError(""); setStockSuccess(""); }}>
+                                Close
+                            </button>
+                        </div>
+
+                        {stockLoading ? (
+                            <div style={{ color: "var(--text-muted)", fontSize: "0.9rem", textAlign: "center", padding: "1rem 0" }}>Loading...</div>
+                        ) : (
+                            <>
+                                {(["cans", "dispensers", "stands"] as const).map((key) => (
+                                    <div key={key} style={{ marginBottom: "1rem" }}>
+                                        <div className="form-label" style={{ marginBottom: "0.4rem", textTransform: "capitalize" }}>{key}</div>
+                                        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                                            <button
+                                                type="button"
+                                                className="btn btn-secondary btn-sm"
+                                                style={{ width: "36px", flexShrink: 0 }}
+                                                onClick={() => setStockValues((v) => ({ ...v, [key]: Math.max(0, v[key] - 1) }))}
+                                            >
+                                                –
+                                            </button>
+                                            <input
+                                                className="form-input"
+                                                type="number"
+                                                min="0"
+                                                step="1"
+                                                value={stockValues[key]}
+                                                onChange={(e) => {
+                                                    const parsed = parseInt(e.target.value, 10);
+                                                    setStockValues((v) => ({ ...v, [key]: Number.isNaN(parsed) ? 0 : Math.max(0, parsed) }));
+                                                }}
+                                                style={{ textAlign: "center", width: "80px" }}
+                                            />
+                                            <button
+                                                type="button"
+                                                className="btn btn-secondary btn-sm"
+                                                style={{ width: "36px", flexShrink: 0 }}
+                                                onClick={() => setStockValues((v) => ({ ...v, [key]: v[key] + 1 }))}
+                                            >
+                                                +
+                                            </button>
+                                        </div>
+                                    </div>
+                                ))}
+
+                                {stockUpdatedAt && (
+                                    <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "1rem" }}>
+                                        Last updated: {new Date(stockUpdatedAt).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}
+                                        {stockUpdatedBy ? ` · by ${stockUpdatedBy}` : ""}
+                                    </div>
+                                )}
+
+                                {stockError && <div className="alert alert-error" style={{ marginBottom: "0.75rem" }}>{stockError}</div>}
+                                {stockSuccess && <div className="alert alert-success" style={{ marginBottom: "0.75rem" }}>{stockSuccess}</div>}
+
+                                <button type="button" className="btn btn-primary btn-full" onClick={() => void saveStock()} disabled={stockSaving}>
+                                    {stockSaving ? "Saving..." : "Save Changes"}
+                                </button>
+                            </>
+                        )}
+                    </div>
+                </div>
+            )}
 
             {/* Odometer modal */}
             {showOdometerModal && (

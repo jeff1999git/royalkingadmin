@@ -12,6 +12,7 @@ export interface SupplyLogDocument {
   amount?: number;
   logType: "water" | "cash";
   cashType?: "debit" | "fuel";
+  paymentStatus?: "cash" | "upi" | "not_paid";
   adminRemark?: string;
   billImageUrl?: string;
   billImagePublicId?: string;
@@ -50,6 +51,7 @@ const SupplyLogSchema = new Schema<SupplyLogDocument>(
       type: String,
       enum: ["debit", "fuel"],
     },
+    paymentStatus: { type: String, enum: ["cash", "upi", "not_paid"] },
     adminRemark: { type: String },
     billImageUrl: { type: String },
     billImagePublicId: { type: String },

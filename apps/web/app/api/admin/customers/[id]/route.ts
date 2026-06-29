@@ -28,6 +28,7 @@ export async function PATCH(
     locationType?: "home" | "office" | "both" | "";
     subscriptionCans?: number | string;
     cashPerCan?: number | string | null;
+    securityDeposit?: number | string | null;
     isActive?: boolean;
     registeredDate?: string;
   };
@@ -85,6 +86,17 @@ export async function PATCH(
       setPayload.cashPerCan = cashPerCan;
     }
   }
+  if (body.securityDeposit !== undefined) {
+    if (body.securityDeposit === null || body.securityDeposit === "") {
+      unsetPayload.securityDeposit = 1;
+    } else {
+      const securityDeposit = Number(body.securityDeposit);
+      if (isNaN(securityDeposit) || securityDeposit < 0) {
+        return NextResponse.json({ error: "Security deposit must be a non-negative number." }, { status: 400 });
+      }
+      setPayload.securityDeposit = securityDeposit;
+    }
+  }
   if (body.isActive !== undefined) setPayload.isActive = Boolean(body.isActive);
   if (body.registeredDate !== undefined) {
     const d = new Date(body.registeredDate);
@@ -140,8 +152,12 @@ export async function DELETE(
   }
 
   await connectToDatabase();
-  const deleted = await Customer.findByIdAndDelete(id).lean();
-  if (!deleted) {
+  const updated = await Customer.findByIdAndUpdate(
+    id,
+    { $set: { isDeleted: true, isActive: false } },
+    { new: true }
+  ).lean();
+  if (!updated) {
     return NextResponse.json({ error: "Customer not found." }, { status: 404 });
   }
 
