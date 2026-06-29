@@ -13,6 +13,7 @@ interface Customer {
   locationType?: "home" | "office" | "both";
   subscriptionCans: number;
   cashPerCan?: number;
+  securityDeposit?: number;
   isActive: boolean;
   isDeleted?: boolean;
   registeredDate?: string;
@@ -60,6 +61,7 @@ export default function CustomersPage() {
     locationType: "home" as "home" | "office" | "both",
     subscriptionCans: "1",
     cashPerCan: "",
+    securityDeposit: "",
     registeredDate: todayISO(),
   });
   const [formError, setFormError] = useState("");
@@ -76,6 +78,7 @@ export default function CustomersPage() {
     locationType: "" as "home" | "office" | "both" | "",
     subscriptionCans: "1",
     cashPerCan: "",
+    securityDeposit: "",
     isActive: true,
     registeredDate: todayISO(),
   });
@@ -114,6 +117,7 @@ export default function CustomersPage() {
           locationType: formData.locationType,
           subscriptionCans: Number(formData.subscriptionCans),
           cashPerCan: formData.cashPerCan !== "" ? Number(formData.cashPerCan) : undefined,
+          securityDeposit: formData.securityDeposit !== "" ? Number(formData.securityDeposit) : undefined,
           registeredDate: formData.registeredDate || undefined,
         }),
       });
@@ -121,7 +125,7 @@ export default function CustomersPage() {
       setSubmitting(false);
       if (!res.ok) { setFormError(data.error ?? "Failed to create customer"); return; }
       setFormSuccess("Customer created!");
-      setFormData({ name: "", phone: "", email: "", address: "", area: "", locationType: "home", subscriptionCans: "1", cashPerCan: "", registeredDate: todayISO() });
+      setFormData({ name: "", phone: "", email: "", address: "", area: "", locationType: "home", subscriptionCans: "1", cashPerCan: "", securityDeposit: "", registeredDate: todayISO() });
       await queryClient.invalidateQueries({ queryKey: CUSTOMERS_KEY });
       setTimeout(() => { setShowForm(false); setFormSuccess(""); }, 1500);
     } catch {
@@ -141,6 +145,7 @@ export default function CustomersPage() {
       locationType: customer.locationType ?? "",
       subscriptionCans: String(customer.subscriptionCans),
       cashPerCan: customer.cashPerCan !== undefined ? String(customer.cashPerCan) : "",
+      securityDeposit: customer.securityDeposit !== undefined ? String(customer.securityDeposit) : "",
       isActive: customer.isActive,
       registeredDate: isoToDateInput(customer.registeredDate ?? customer.createdAt),
     });
@@ -165,14 +170,23 @@ export default function CustomersPage() {
           locationType: editData.locationType || undefined,
           subscriptionCans: Number(editData.subscriptionCans),
           cashPerCan: editData.cashPerCan !== "" ? Number(editData.cashPerCan) : null,
+          securityDeposit: editData.securityDeposit !== "" ? Number(editData.securityDeposit) : null,
           isActive: editData.isActive,
           registeredDate: editData.registeredDate || undefined,
         }),
       });
-      const data = await safeJson(res);
       setEditSaving(false);
-      if (!res.ok) { setEditError(data.error ?? "Failed to update customer"); return; }
-      await queryClient.invalidateQueries({ queryKey: CUSTOMERS_KEY });
+      if (!res.ok) {
+        const errData = await safeJson(res);
+        setEditError(errData.error ?? "Failed to update customer");
+        return;
+      }
+      const updated = (await res.json()) as Customer;
+      // Immediately patch the cache so re-opening edit shows fresh values
+      queryClient.setQueryData<Customer[]>(CUSTOMERS_KEY, (old) =>
+        old ? old.map((c) => (c._id === updated._id ? updated : c)) : old
+      );
+      void queryClient.invalidateQueries({ queryKey: CUSTOMERS_KEY });
       setEditingCustomer(null);
     } catch {
       setEditSaving(false);
@@ -470,6 +484,10 @@ export default function CustomersPage() {
                   <input id="cCashPerCan" className="form-input" type="number" min="0" step="0.01" value={formData.cashPerCan} onChange={(e) => setFormData((f) => ({ ...f, cashPerCan: e.target.value }))} placeholder="e.g. 50" />
                 </div>
                 <div className="form-group">
+                  <label className="form-label" htmlFor="cSecurityDeposit">Security Deposit (₹)</label>
+                  <input id="cSecurityDeposit" className="form-input" type="number" min="0" step="0.01" value={formData.securityDeposit} onChange={(e) => setFormData((f) => ({ ...f, securityDeposit: e.target.value }))} placeholder="e.g. 500" />
+                </div>
+                <div className="form-group">
                   <label className="form-label" htmlFor="cRegisteredDate">Added Date *</label>
                   <input
                     id="cRegisteredDate"
@@ -543,6 +561,12 @@ export default function CustomersPage() {
                 <div>
                   <div className="text-sm text-muted">Cash Per Can</div>
                   <div style={{ fontWeight: 600 }}>₹{selectedCustomer.cashPerCan}</div>
+                </div>
+              )}
+              {selectedCustomer.securityDeposit !== undefined && (
+                <div>
+                  <div className="text-sm text-muted">Security Deposit</div>
+                  <div style={{ fontWeight: 600 }}>₹{selectedCustomer.securityDeposit}</div>
                 </div>
               )}
               <div>
@@ -658,6 +682,10 @@ export default function CustomersPage() {
               <div className="form-group">
                 <label className="form-label" htmlFor="eCashPerCan">Cash Per Can (₹)</label>
                 <input id="eCashPerCan" className="form-input" type="number" min="0" step="0.01" value={editData.cashPerCan} onChange={(e) => setEditData((d) => ({ ...d, cashPerCan: e.target.value }))} placeholder="e.g. 50" />
+              </div>
+              <div className="form-group">
+                <label className="form-label" htmlFor="eSecurityDeposit">Security Deposit (₹)</label>
+                <input id="eSecurityDeposit" className="form-input" type="number" min="0" step="0.01" value={editData.securityDeposit} onChange={(e) => setEditData((d) => ({ ...d, securityDeposit: e.target.value }))} placeholder="e.g. 500" />
               </div>
               <div className="form-group">
                 <label className="form-label" htmlFor="eRegisteredDate">Added Date</label>

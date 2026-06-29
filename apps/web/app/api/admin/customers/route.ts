@@ -34,6 +34,7 @@ export async function POST(req: NextRequest) {
     locationType?: "home" | "office" | "both";
     subscriptionCans?: number | string;
     cashPerCan?: number | string;
+    securityDeposit?: number | string;
     registeredDate?: string;
   };
 
@@ -45,6 +46,7 @@ export async function POST(req: NextRequest) {
   const locationType = body.locationType;
   const subscriptionCans = Number(body.subscriptionCans ?? 1);
   const cashPerCan = body.cashPerCan !== undefined && body.cashPerCan !== "" ? Number(body.cashPerCan) : undefined;
+  const securityDeposit = body.securityDeposit !== undefined && body.securityDeposit !== "" ? Number(body.securityDeposit) : undefined;
   const registeredDate = body.registeredDate ? new Date(body.registeredDate) : new Date();
 
   if (!name) return NextResponse.json({ error: "Name is required." }, { status: 400 });
@@ -55,6 +57,9 @@ export async function POST(req: NextRequest) {
   }
   if (cashPerCan !== undefined && (isNaN(cashPerCan) || cashPerCan < 0)) {
     return NextResponse.json({ error: "Cash per can must be a non-negative number." }, { status: 400 });
+  }
+  if (securityDeposit !== undefined && (isNaN(securityDeposit) || securityDeposit < 0)) {
+    return NextResponse.json({ error: "Security deposit must be a non-negative number." }, { status: 400 });
   }
   if (locationType && locationType !== "home" && locationType !== "office" && locationType !== "both") {
     return NextResponse.json({ error: "Location type must be home, office, or both." }, { status: 400 });
@@ -71,6 +76,7 @@ export async function POST(req: NextRequest) {
       locationType,
       subscriptionCans,
       cashPerCan,
+      securityDeposit,
       registeredDate,
       ...(Types.ObjectId.isValid(session.user.id) ? { createdBy: session.user.id } : {}),
     });

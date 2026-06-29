@@ -28,6 +28,7 @@ export async function PATCH(
     locationType?: "home" | "office" | "both" | "";
     subscriptionCans?: number | string;
     cashPerCan?: number | string | null;
+    securityDeposit?: number | string | null;
     isActive?: boolean;
     registeredDate?: string;
   };
@@ -83,6 +84,17 @@ export async function PATCH(
         return NextResponse.json({ error: "Cash per can must be a non-negative number." }, { status: 400 });
       }
       setPayload.cashPerCan = cashPerCan;
+    }
+  }
+  if (body.securityDeposit !== undefined) {
+    if (body.securityDeposit === null || body.securityDeposit === "") {
+      unsetPayload.securityDeposit = 1;
+    } else {
+      const securityDeposit = Number(body.securityDeposit);
+      if (isNaN(securityDeposit) || securityDeposit < 0) {
+        return NextResponse.json({ error: "Security deposit must be a non-negative number." }, { status: 400 });
+      }
+      setPayload.securityDeposit = securityDeposit;
     }
   }
   if (body.isActive !== undefined) setPayload.isActive = Boolean(body.isActive);
