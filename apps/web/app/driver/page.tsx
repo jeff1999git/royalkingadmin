@@ -241,6 +241,7 @@ export default function DriverDashboard() {
   const [cashBillPreview, setCashBillPreview] = useState("");
   const [cashBillProcessing, setCashBillProcessing] = useState(false);
   const cashBillInputRef = useRef<HTMLInputElement | null>(null);
+  const cashCameraInputRef = useRef<HTMLInputElement | null>(null);
 
   const queryClient = useQueryClient();
 
@@ -418,6 +419,7 @@ export default function DriverDashboard() {
   function clearCashBillSelection() {
     if (cashBillPreview.startsWith("blob:")) URL.revokeObjectURL(cashBillPreview);
     if (cashBillInputRef.current) cashBillInputRef.current.value = "";
+    if (cashCameraInputRef.current) cashCameraInputRef.current.value = "";
     setCashBillPreview("");
     setCashBillFile(null);
   }
@@ -955,31 +957,59 @@ export default function DriverDashboard() {
                   <div className="form-group">
                     <label className="form-label" htmlFor="cashBillImage">Fuel Bill Image *</label>
                     <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", marginTop: "0.35rem" }}>
-                      <button
-                        type="button"
-                        className="btn btn-secondary btn-sm"
-                        onClick={() => cashBillInputRef.current?.click()}
-                      >
-                        Add Fuel Bill Image
-                      </button>
+                      {prefersCameraCapture ? (
+                        <>
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => cashCameraInputRef.current?.click()}
+                          >
+                            Camera
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => cashBillInputRef.current?.click()}
+                          >
+                            Gallery
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-sm"
+                          onClick={() => cashBillInputRef.current?.click()}
+                        >
+                          Add Fuel Bill Image
+                        </button>
+                      )}
                     </div>
+                    {/* Gallery / file picker — no capture */}
                     <input
                       ref={cashBillInputRef}
                       id="cashBillImage"
-                      className="form-input"
                       type="file"
                       accept="image/*,.heic,.heif,image/heic,image/heif"
-                      capture={prefersCameraCapture ? "environment" : undefined}
                       onChange={(e) => void handleCashBillChange(e)}
                       style={{ position: "absolute", opacity: 0, width: 1, height: 1, pointerEvents: "none" }}
                       tabIndex={-1}
                     />
+                    {/* Camera-only picker — mobile only */}
+                    {prefersCameraCapture && (
+                      <input
+                        ref={cashCameraInputRef}
+                        type="file"
+                        accept="image/*,.heic,.heif,image/heic,image/heif"
+                        capture="environment"
+                        onChange={(e) => void handleCashBillChange(e)}
+                        style={{ position: "absolute", opacity: 0, width: 1, height: 1, pointerEvents: "none" }}
+                        tabIndex={-1}
+                      />
+                    )}
                     <div style={{ fontSize: "0.8rem", color: "var(--text-secondary)", marginTop: "0.35rem" }}>
                       {cashBillFile
                         ? `Selected: ${cashBillFile.name}`
-                        : prefersCameraCapture
-                          ? "On phone, this will try to open the camera first."
-                          : "Choose the fuel bill image from your device."}
+                        : "Attach the fuel bill image."}
                     </div>
                     {cashBillProcessing && (
                       <div style={{ fontSize: "0.8rem", color: "var(--text-secondary)", marginTop: "0.35rem" }}>
