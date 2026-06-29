@@ -41,6 +41,7 @@ interface DeliveryLog {
   amount?: number;
   logType?: "water" | "cash";
   cashType?: "debit" | "fuel";
+  paymentStatus?: "cash" | "upi" | "not_paid";
   billImageUrl?: string;
   customer?: {
     _id: string;
@@ -213,6 +214,7 @@ export default function DriverDashboard() {
     cansTakenBack: "",
     vehicleId: "",
     notes: "",
+    paymentStatus: "cash" as "cash" | "upi" | "not_paid",
   });
   const [customerSearch, setCustomerSearch] = useState("");
   const [showCustomerList, setShowCustomerList] = useState(false);
@@ -500,6 +502,7 @@ export default function DriverDashboard() {
         cansTakenBack: deliveryForm.cansTakenBack !== "" ? Number(deliveryForm.cansTakenBack) : undefined,
         vehicleId: deliveryForm.vehicleId || undefined,
         notes: deliveryForm.notes,
+        paymentStatus: deliveryForm.paymentStatus,
       }),
     });
 
@@ -513,7 +516,7 @@ export default function DriverDashboard() {
     }
 
     setSuccess("Delivery logged successfully.");
-    setDeliveryForm({ deliveryKey: "", cansDelivered: "", cansTakenBack: "", vehicleId: assignedVehicleId, notes: "" });
+    setDeliveryForm({ deliveryKey: "", cansDelivered: "", cansTakenBack: "", vehicleId: assignedVehicleId, notes: "", paymentStatus: "cash" });
     setCustomerSearch("");
     await queryClient.invalidateQueries({ queryKey: ["driver", "supplies"] });
   }
@@ -789,6 +792,24 @@ export default function DriverDashboard() {
                     onChange={(e) => setDeliveryForm((f) => ({ ...f, notes: e.target.value }))}
                     placeholder="e.g. Customer was away, left at gate"
                   />
+                </div>
+
+                <div className="form-group" style={{ gridColumn: "1 / -1" }}>
+                  <label className="form-label">Payment Status</label>
+                  <div style={{ display: "flex", gap: "1rem", marginTop: "0.4rem", flexWrap: "wrap" }}>
+                    {(["cash", "upi", "not_paid"] as const).map((ps) => (
+                      <label key={ps} style={{ display: "flex", alignItems: "center", gap: "0.4rem", cursor: "pointer", fontWeight: deliveryForm.paymentStatus === ps ? 700 : 500 }}>
+                        <input
+                          type="radio"
+                          name="paymentStatus"
+                          value={ps}
+                          checked={deliveryForm.paymentStatus === ps}
+                          onChange={() => setDeliveryForm((f) => ({ ...f, paymentStatus: ps }))}
+                        />
+                        {ps === "cash" ? "Cash" : ps === "upi" ? "UPI" : "Not Paid"}
+                      </label>
+                    ))}
+                  </div>
                 </div>
               </div>
 
@@ -1354,6 +1375,14 @@ export default function DriverDashboard() {
                     <div className="text-sm text-muted">Vehicle</div>
                     <div style={{ fontWeight: 600 }}>
                       {[selectedLog.vehicle.name, selectedLog.vehicle.vehicleNumber, selectedLog.vehicle.capacity].filter(Boolean).join(" - ")}
+                    </div>
+                  </div>
+                )}
+                {selectedLog.paymentStatus && (
+                  <div>
+                    <div className="text-sm text-muted">Payment Status</div>
+                    <div style={{ fontWeight: 600 }}>
+                      {selectedLog.paymentStatus === "cash" ? "Cash" : selectedLog.paymentStatus === "upi" ? "UPI" : "Not Paid"}
                     </div>
                   </div>
                 )}

@@ -27,6 +27,7 @@ interface SupplyLog {
   amount?: number;
   logType?: "water" | "cash";
   cashType?: "debit" | "fuel";
+  paymentStatus?: "cash" | "upi" | "not_paid";
   adminRemark?: string;
   billImageUrl?: string;
   billImagePublicId?: string;
@@ -146,6 +147,7 @@ export default function SuppliesPage() {
   const [editingDriverRemark, setEditingDriverRemark] = useState("");
   const [editingCansDelivered, setEditingCansDelivered] = useState("");
   const [editingCansTakenBack, setEditingCansTakenBack] = useState("");
+  const [editingPaymentStatus, setEditingPaymentStatus] = useState<"cash" | "upi" | "not_paid">("cash");
   const [editSaving, setEditSaving] = useState(false);
   const [deleteSaving, setDeleteSaving] = useState(false);
   const [confirmDeleteLog, setConfirmDeleteLog] = useState<SupplyLog | null>(null);
@@ -620,6 +622,8 @@ export default function SuppliesPage() {
     setEditingDriverRemark(log.notes ?? "");
     setEditingCansDelivered(log.cansDelivered !== undefined ? String(log.cansDelivered) : "");
     setEditingCansTakenBack(log.cansTakenBack !== undefined ? String(log.cansTakenBack) : "");
+    const ps = log.paymentStatus;
+    setEditingPaymentStatus(ps === "upi" || ps === "not_paid" ? ps : "cash");
     setError("");
   }
 
@@ -648,6 +652,7 @@ export default function SuppliesPage() {
                 cansTakenBack: editingCansTakenBack !== "" ? Number(editingCansTakenBack) : undefined,
                 notes: editingDriverRemark,
                 adminRemark: editingRemark,
+                paymentStatus: editingPaymentStatus,
               }
         ),
       });
@@ -981,7 +986,18 @@ export default function SuppliesPage() {
                             }}
                             style={{ cursor: "pointer" }}
                           >
-                            {log.amount !== undefined ? log.amount : "-"}
+                            <div>{log.amount !== undefined ? log.amount : "-"}</div>
+                            {(() => {
+                              const ps = log.paymentStatus;
+                              const label = !ps || ps === "cash" ? "Cash" : ps === "upi" ? "UPI" : "Not Paid";
+                              const bg = !ps || ps === "cash" ? "#e8f5e9" : ps === "upi" ? "#e3f2fd" : "#fff3e0";
+                              const color = !ps || ps === "cash" ? "#2e7d32" : ps === "upi" ? "#1565c0" : "#e65100";
+                              return (
+                                <span style={{ fontSize: "0.72rem", fontWeight: 700, padding: "0.1rem 0.45rem", borderRadius: "99px", background: bg, color }}>
+                                  {label}
+                                </span>
+                              );
+                            })()}
                           </td>
                         )}
                         <td
@@ -1290,6 +1306,19 @@ export default function SuppliesPage() {
                   <div style={{ fontWeight: 600 }}>{selectedLog.amount}</div>
                 </div>
               )}
+              {selectedLog.logType !== "cash" && (
+                <div>
+                  <div className="text-sm text-muted">Payment Status</div>
+                  <div style={{
+                    display: "inline-block", fontWeight: 700, fontSize: "0.82rem",
+                    padding: "0.18rem 0.6rem", borderRadius: "99px",
+                    background: !selectedLog.paymentStatus || selectedLog.paymentStatus === "cash" ? "#e8f5e9" : selectedLog.paymentStatus === "upi" ? "#e3f2fd" : "#fff3e0",
+                    color: !selectedLog.paymentStatus || selectedLog.paymentStatus === "cash" ? "#2e7d32" : selectedLog.paymentStatus === "upi" ? "#1565c0" : "#e65100",
+                  }}>
+                    {!selectedLog.paymentStatus || selectedLog.paymentStatus === "cash" ? "Cash" : selectedLog.paymentStatus === "upi" ? "UPI" : "Not Paid"}
+                  </div>
+                </div>
+              )}
               {selectedLog.adminRemark && (
                 <div>
                   <div className="text-sm text-muted">Admin Remark</div>
@@ -1453,6 +1482,23 @@ export default function SuppliesPage() {
                     value={editingCansTakenBack}
                     onChange={(e) => setEditingCansTakenBack(e.target.value)}
                   />
+                </div>
+                <div className="form-group" style={{ marginBottom: "0.75rem" }}>
+                  <label className="form-label">Payment Status</label>
+                  <div style={{ display: "flex", gap: "1rem", marginTop: "0.4rem", flexWrap: "wrap" }}>
+                    {(["cash", "upi", "not_paid"] as const).map((ps) => (
+                      <label key={ps} style={{ display: "flex", alignItems: "center", gap: "0.4rem", cursor: "pointer", fontWeight: editingPaymentStatus === ps ? 700 : 500 }}>
+                        <input
+                          type="radio"
+                          name="editPaymentStatus"
+                          value={ps}
+                          checked={editingPaymentStatus === ps}
+                          onChange={() => setEditingPaymentStatus(ps)}
+                        />
+                        {ps === "cash" ? "Cash" : ps === "upi" ? "UPI" : "Not Paid"}
+                      </label>
+                    ))}
+                  </div>
                 </div>
                 <div className="form-group" style={{ marginBottom: "0.75rem" }}>
                   <label className="form-label" htmlFor="editDriverNote">Driver Notes (Optional)</label>
