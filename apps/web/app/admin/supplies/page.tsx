@@ -2,6 +2,7 @@
 
 /* eslint-disable @next/next/no-img-element */
 import { useEffect, useMemo, useState } from "react";
+import { cloudinaryAuto, cloudinaryThumb } from "../../../lib/imageUrl";
 import {
   useAdminAddedSupplies,
   useAdminCashCredits,
@@ -10,12 +11,6 @@ import {
   useAdminQueryClient,
   type PaginatedSupplyLogsWithStats,
 } from "../../hooks/useAdminQueries";
-
-interface DriverOption {
-  _id: string;
-  name: string;
-  username: string;
-}
 
 interface SupplyLog {
   _id: string;
@@ -138,7 +133,6 @@ export default function SuppliesPage() {
     vehicle: "",
     paymentStatus: "",
   });
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [selectedLog, setSelectedLog] = useState<SupplyLog | null>(null);
   const [expandedImageUrl, setExpandedImageUrl] = useState<string | null>(null);
@@ -212,25 +206,18 @@ export default function SuppliesPage() {
     setCashPage(1);
   }, [filters]);
 
-  useEffect(() => {
-    const isWater = supplyTab === "water";
-    setLoading(isWater ? logsLoading : cashLogsLoading);
-    if ((isWater && logsError) || (!isWater && cashLogsError)) {
-      setError(isWater ? "Failed to fetch water supplies." : "Failed to fetch cash credits.");
-      return;
-    }
-    if ((isWater && queriedLogs) || (!isWater && queriedCashLogs)) {
-      setError("");
-    }
-  }, [cashLogsError, cashLogsLoading, logsError, logsLoading, queriedCashLogs, queriedLogs, supplyTab]);
+  const loading = supplyTab === "water" ? logsLoading : cashLogsLoading;
+  const fetchError = supplyTab === "water"
+    ? (logsError ? "Failed to fetch water supplies." : "")
+    : (cashLogsError ? "Failed to fetch cash credits." : "");
 
   const activeData: PaginatedSupplyLogsWithStats | undefined = supplyTab === "water" ? queriedLogs : queriedCashLogs;
-  const effectiveLogs = activeData?.logs ?? [];
+  const effectiveLogs = useMemo(() => activeData?.logs ?? [], [activeData]);
   const totalPages = activeData?.totalPages ?? 1;
   const currentPage = supplyTab === "water" ? waterPage : cashPage;
 
   const groupedLogs = useMemo(() => {
-    const serialBase = (activeData?.page ?? 1 - 1) * 100;
+    const serialBase = ((activeData?.page ?? 1) - 1) * (activeData?.limit ?? 100);
     const serialById = new Map(
       effectiveLogs.map((log, index) => [log._id, serialBase + index + 1] as const),
     );
@@ -256,7 +243,7 @@ export default function SuppliesPage() {
         };
       })
       .sort((a, b) => b.dateSortValue - a.dateSortValue);
-  }, [effectiveLogs, activeData?.page]);
+  }, [effectiveLogs, activeData?.page, activeData?.limit]);
 
   const summary = useMemo(() => {
     const s = activeData?.stats;
@@ -866,7 +853,7 @@ export default function SuppliesPage() {
         </span>
       </div>
 
-      {error && <div className="alert alert-error">{error}</div>}
+      {(error || fetchError) && <div className="alert alert-error">{error || fetchError}</div>}
 
       {loading ? (
         <p style={{ color: "var(--text-muted)" }}>
@@ -1269,8 +1256,10 @@ export default function SuppliesPage() {
                           }}
                         >
                           <img
-                            src={selectedLog.billImageUrl}
+                            src={cloudinaryThumb(selectedLog.billImageUrl, 640)}
                             alt="Fuel bill uploaded by driver"
+                            loading="lazy"
+                            decoding="async"
                             style={{ width: "100%", maxWidth: "260px", borderRadius: "10px", border: "1px solid var(--border)" }}
                           />
                         </button>
@@ -1398,8 +1387,9 @@ export default function SuppliesPage() {
               </div>
             </div>
             <img
-              src={expandedImageUrl}
+              src={cloudinaryAuto(expandedImageUrl)}
               alt="Fuel bill detailed preview"
+              decoding="async"
               style={{ width: "100%", maxHeight: "75vh", objectFit: "contain", borderRadius: "10px", border: "1px solid var(--border)" }}
             />
           </div>

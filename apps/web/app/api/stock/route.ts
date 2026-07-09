@@ -12,11 +12,11 @@ export async function GET() {
 
   await connectToDatabase();
 
-  let stock = await Stock.findOne().lean();
-  if (!stock) {
-    stock = await Stock.create({ cans: 0, dispensers: 0, stands: 0 });
-    stock = await Stock.findOne().lean();
-  }
+  const stock = await Stock.findOneAndUpdate(
+    {},
+    { $setOnInsert: { cans: 0, dispensers: 0, stands: 0 } },
+    { upsert: true, new: true }
+  ).lean();
 
   return NextResponse.json(stock);
 }

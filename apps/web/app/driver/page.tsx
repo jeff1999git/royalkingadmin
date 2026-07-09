@@ -3,6 +3,7 @@
 /* eslint-disable @next/next/no-img-element */
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { cloudinaryAuto, cloudinaryThumb } from "../../lib/imageUrl";
 
 interface Vehicle {
   _id: string;
@@ -191,12 +192,7 @@ const DAY_GROUPS_PER_PAGE = 3;
 export default function DriverDashboard() {
   const [activeTab, setActiveTab] = useState<"delivery" | "cash" | "register">("delivery");
 
-  // Vehicles
-  const [vehicles, setVehicles] = useState<Vehicle[]>([]);
-  const [assignedVehicleId, setAssignedVehicleId] = useState("");
-
   // Logs and UI state
-  const [logs, setLogs] = useState<DeliveryLog[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -249,6 +245,7 @@ export default function DriverDashboard() {
 
   const { data: vehiclesData, isLoading: vehiclesLoading } = useQuery<DriverVehiclesResponse>({
     queryKey: ["driver", "vehicles"],
+    staleTime: 1000 * 60 * 10,
     queryFn: async () => {
       const res = await fetch("/api/driver/vehicles", { cache: "no-store" });
       if (!res.ok) throw new Error("Failed to load vehicles");
@@ -281,18 +278,18 @@ export default function DriverDashboard() {
     },
   });
 
+  const vehicles = vehiclesData?.vehicles ?? [];
+  const assignedVehicleId =
+    vehiclesData?.assignedVehicleId &&
+    vehiclesData.vehicles.some((v) => v._id === vehiclesData.assignedVehicleId)
+      ? vehiclesData.assignedVehicleId
+      : "";
+
+  // Default the delivery form's vehicle to the assigned one once loaded
   useEffect(() => {
-    if (vehiclesData) {
-      setVehicles(vehiclesData.vehicles);
-      const nextId =
-        vehiclesData.assignedVehicleId &&
-        vehiclesData.vehicles.some((v) => v._id === vehiclesData.assignedVehicleId)
-          ? vehiclesData.assignedVehicleId
-          : "";
-      setAssignedVehicleId(nextId);
-      setDeliveryForm((f) => (f.vehicleId ? f : { ...f, vehicleId: nextId }));
-    }
-  }, [vehiclesData]);
+    if (!assignedVehicleId) return;
+    setDeliveryForm((f) => (f.vehicleId ? f : { ...f, vehicleId: assignedVehicleId }));
+  }, [assignedVehicleId]);
 
 
   // Close customer dropdown on outside click
@@ -306,17 +303,15 @@ export default function DriverDashboard() {
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
-  useEffect(() => {
-    if (logsData) {
-      setLogs(
-        logsData.map((log) => ({
-          ...log,
-          logType: log.logType === "cash" ? "cash" : "water",
-          formattedSuppliedAt: log.formattedSuppliedAt ?? formatDateTime(log.suppliedAt),
-        })),
-      );
-    }
-  }, [logsData]);
+  const logs = useMemo<DeliveryLog[]>(
+    () =>
+      (logsData ?? []).map((log) => ({
+        ...log,
+        logType: log.logType === "cash" ? "cash" : "water",
+        formattedSuppliedAt: log.formattedSuppliedAt ?? formatDateTime(log.suppliedAt),
+      })),
+    [logsData],
+  );
 
   const deliveryLogs = useMemo(
     () => logs.filter((log) => (log.logType ?? "water") === "water"),
@@ -1133,8 +1128,10 @@ export default function DriverDashboard() {
                           {log.billImageUrl && (
                             <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", marginTop: "0.25rem" }}>
                               <img
-                                src={log.billImageUrl}
+                                src={cloudinaryThumb(log.billImageUrl, 120)}
                                 alt="Fuel bill preview"
+                                loading="lazy"
+                                decoding="async"
                                 style={{
                                   width: "52px", height: "52px", objectFit: "cover",
                                   borderRadius: "8px", border: "1px solid var(--border)",
@@ -1303,8 +1300,10 @@ export default function DriverDashboard() {
                         style={{ border: "0", background: "transparent", padding: 0, cursor: "zoom-in", width: "fit-content" }}
                       >
                         <img
-                          src={selectedLog.billImageUrl}
+                          src={cloudinaryThumb(selectedLog.billImageUrl, 640)}
                           alt="Fuel bill"
+                          loading="lazy"
+                          decoding="async"
                           style={{ width: "100%", maxWidth: "260px", borderRadius: "10px", border: "1px solid var(--border)" }}
                         />
                       </button>
@@ -1428,8 +1427,9 @@ export default function DriverDashboard() {
               </div>
             </div>
             <img
-              src={expandedImageUrl}
+              src={cloudinaryAuto(expandedImageUrl)}
               alt="Fuel bill detailed preview"
+              decoding="async"
               style={{ width: "100%", maxHeight: "75vh", objectFit: "contain", borderRadius: "10px", border: "1px solid var(--border)" }}
             />
           </div>

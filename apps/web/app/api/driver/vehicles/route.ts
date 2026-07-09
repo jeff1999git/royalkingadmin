@@ -13,7 +13,10 @@ export async function GET() {
 
   await connectToDatabase();
   const [vehicles, driver] = await Promise.all([
-    Vehicle.find({ isActive: true }).sort({ createdAt: -1 }).lean(),
+    Vehicle.find({ isActive: true })
+      .select("name vehicleNumber capacity")
+      .sort({ createdAt: -1 })
+      .lean(),
     User.findById(session.user.id).select("assignedVehicle").lean(),
   ]);
 

@@ -27,8 +27,11 @@ export async function GET(req: NextRequest) {
   await connectToDatabase();
 
   if (!pageParam && !limitParam) {
-    // Legacy: no pagination params — return plain array for dropdowns
-    const customers = await Customer.find(baseQuery).sort({ isActive: -1, name: 1 }).lean();
+    // No pagination params — trimmed array for dropdowns
+    const customers = await Customer.find(baseQuery)
+      .select("name phone area isActive locationType subscriptionCans cashPerCan")
+      .sort({ isActive: -1, name: 1 })
+      .lean();
     return NextResponse.json(customers);
   }
 

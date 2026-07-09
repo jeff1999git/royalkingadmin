@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 
 function formatDateTime(value: string | Date) {
   return new Date(value).toLocaleString("en-IN", {
@@ -187,6 +187,7 @@ export function useAdminPaginatedCustomers(params: {
     queryKey: ["admin", "customers", "paginated", params],
     staleTime: 1000 * 60 * 2,
     gcTime: 1000 * 60 * 15,
+    placeholderData: keepPreviousData,
     queryFn: async () => {
       const p = new URLSearchParams();
       p.set("page", String(params.page));
@@ -222,6 +223,7 @@ export function useAdminPaginatedSupplies(page: number, limit: number) {
   return useQuery<PaginatedSupplyLogs>({
     queryKey: ["admin", "supplies", "paginated", page, limit],
     staleTime: 1000 * 30,
+    placeholderData: keepPreviousData,
     queryFn: async () => {
       const res = await fetch(`/api/admin/supplies?page=${page}&limit=${limit}&logType=water`, { cache: "no-store" });
       if (!res.ok) {
@@ -273,6 +275,7 @@ export function useAdminAddedSupplies(
   return useQuery<PaginatedSupplyLogsWithStats>({
     queryKey: ["admin", "supplies", "added", filters, page],
     staleTime: 1000 * 30,
+    placeholderData: keepPreviousData,
     queryFn: async () => {
       const params = new URLSearchParams();
       params.set("logType", "water");
@@ -313,6 +316,7 @@ export function useAdminCashCredits(
   return useQuery<PaginatedSupplyLogsWithStats>({
     queryKey: ["admin", "supplies", "cash-credits", filters, page],
     staleTime: 1000 * 30,
+    placeholderData: keepPreviousData,
     queryFn: async () => {
       const params = new URLSearchParams();
       params.set("logType", "cash");
