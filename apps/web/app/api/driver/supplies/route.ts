@@ -6,6 +6,7 @@ import { deleteImageFromCloudinary, uploadImageToCloudinary } from "../../../../
 import { connectToDatabase } from "../../../../lib/mongodb";
 import SupplyLog from "../../../../models/SupplyLog";
 import Customer from "../../../../models/Customer";
+import "../../../../models/Vehicle";
 
 type DriverSupplyRequestBody = {
   logType?: "water" | "cash";
