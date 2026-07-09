@@ -5,18 +5,58 @@ import { authOptions } from "../../../../lib/auth";
 import { connectToDatabase } from "../../../../lib/mongodb";
 import Customer from "../../../../models/Customer";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session || session.user.role !== "admin") {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  await connectToDatabase();
-  const customers = await Customer.find({ isDeleted: { $ne: true } })
-    .sort({ isActive: -1, name: 1 })
-    .lean();
+  const search = req.nextUrl.searchParams.get("search")?.trim() ?? "";
+  const area = req.nextUrl.searchParams.get("area")?.trim() ?? "";
+  const pageParam = req.nextUrl.searchParams.get("page");
+  const limitParam = req.nextUrl.searchParams.get("limit");
 
-  return NextResponse.json(customers);
+  const baseQuery: Record<string, unknown> = { isDeleted: { $ne: true } };
+  if (search) {
+    const escaped = search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const regex = new RegExp(escaped, "i");
+    baseQuery.$or = [{ name: regex }, { phone: regex }, { email: regex }, { area: regex }];
+  }
+  if (area) baseQuery.area = area;
+
+  await connectToDatabase();
+
+  if (!pageParam && !limitParam) {
+    // Legacy: no pagination params — return plain array for dropdowns
+    const customers = await Customer.find(baseQuery).sort({ isActive: -1, name: 1 }).lean();
+    return NextResponse.json(customers);
+  }
+
+  const page = Math.max(1, Number.parseInt(pageParam ?? "1", 10) || 1);
+  const limit = Math.max(1, Math.min(100, Number.parseInt(limitParam ?? "30", 10) || 30));
+  const skip = (page - 1) * limit;
+
+  const [customers, aggResult, areas] = await Promise.all([
+    Customer.find(baseQuery).sort({ isActive: -1, name: 1 }).skip(skip).limit(limit).lean(),
+    Customer.aggregate([
+      { $match: baseQuery },
+      {
+        $group: {
+          _id: "$isActive",
+          count: { $sum: 1 },
+        },
+      },
+    ]),
+    Customer.distinct("area", { isDeleted: { $ne: true } }),
+  ]);
+
+  const activeCount = (aggResult.find((r: { _id: boolean; count: number }) => r._id === true)?.count ?? 0) as number;
+  const inactiveCount = (aggResult.find((r: { _id: boolean; count: number }) => r._id === false)?.count ?? 0) as number;
+  const total = activeCount + inactiveCount;
+  const totalPages = Math.max(1, Math.ceil(total / limit));
+  const sortedAreas = (areas as string[]).filter(Boolean).sort();
+
+  return NextResponse.json({ customers, total, activeCount, inactiveCount, page, limit, totalPages, areas: sortedAreas });
 }
 
 export async function POST(req: NextRequest) {

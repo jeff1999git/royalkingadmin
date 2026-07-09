@@ -51,6 +51,7 @@ export async function GET(req: NextRequest) {
   const limitParam = req.nextUrl.searchParams.get("limit");
   const amountStatusParam = req.nextUrl.searchParams.get("amountStatus");
   const logTypeParam = req.nextUrl.searchParams.get("logType");
+  const paymentStatusParam = req.nextUrl.searchParams.get("paymentStatus");
 
   const query: {
     suppliedAt?: { $gte: Date; $lte: Date };
@@ -58,6 +59,7 @@ export async function GET(req: NextRequest) {
     vehicle?: string;
     amount?: { $exists?: boolean; $ne?: null };
     logType?: "water" | "cash";
+    paymentStatus?: "upi" | "not_paid" | { $nin: string[] };
   } = {};
 
   if (dateParam) {
@@ -104,31 +106,64 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Invalid logType value." }, { status: 400 });
   }
 
+  if (paymentStatusParam === "cash") {
+    // Include records explicitly marked "cash" AND old records with no field set
+    query.paymentStatus = { $nin: ["upi", "not_paid"] };
+  } else if (paymentStatusParam === "upi" || paymentStatusParam === "not_paid") {
+    query.paymentStatus = paymentStatusParam;
+  } else if (paymentStatusParam && paymentStatusParam !== "") {
+    return NextResponse.json({ error: "Invalid paymentStatus value." }, { status: 400 });
+  }
+
   try {
     await connectToDatabase();
     void Customer; // ensure model is registered for populate
     const hasPagination = Boolean(pageParam || limitParam);
     const page = Math.max(1, Number.parseInt(pageParam ?? "1", 10) || 1);
-    const limit = Math.max(1, Math.min(100, Number.parseInt(limitParam ?? "10", 10) || 10));
+    const limit = Math.max(1, Math.min(200, Number.parseInt(limitParam ?? "10", 10) || 10));
     const skip = (page - 1) * limit;
 
-    const baseQuery = SupplyLog.find(query)
+    const findQuery = SupplyLog.find(query)
       .populate("driver", "name username phone")
       .populate("vehicle", "name vehicleNumber capacity")
       .populate("customer", "name phone area")
       .sort({ suppliedAt: -1 });
 
-    const logs = hasPagination
-      ? await baseQuery.skip(skip).limit(limit).lean()
-      : await baseQuery.lean();
-
-    if (hasPagination) {
-      const total = await SupplyLog.countDocuments(query);
-      const totalPages = Math.max(1, Math.ceil(total / limit));
-      return NextResponse.json({ logs, total, page, limit, totalPages });
+    if (!hasPagination) {
+      const logs = await findQuery.lean();
+      return NextResponse.json(logs);
     }
 
-    return NextResponse.json(logs);
+    const [logs, aggResult] = await Promise.all([
+      findQuery.skip(skip).limit(limit).lean(),
+      SupplyLog.aggregate([
+        { $match: query },
+        {
+          $group: {
+            _id: null,
+            count: { $sum: 1 },
+            totalCans: { $sum: { $ifNull: ["$cansDelivered", 0] } },
+            totalCansTakenBack: { $sum: { $ifNull: ["$cansTakenBack", 0] } },
+            totalAmount: { $sum: { $ifNull: ["$amount", 0] } },
+            driverIds: { $addToSet: "$driver" },
+            customerIds: { $addToSet: "$customer" },
+          },
+        },
+      ]),
+    ]);
+
+    const agg = aggResult[0] as { count: number; totalCans: number; totalCansTakenBack: number; totalAmount: number; driverIds: unknown[]; customerIds: unknown[] } | undefined;
+    const total = agg?.count ?? 0;
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+    const stats = {
+      totalCans: agg?.totalCans ?? 0,
+      totalCansTakenBack: agg?.totalCansTakenBack ?? 0,
+      totalAmount: agg?.totalAmount ?? 0,
+      uniqueDrivers: agg?.driverIds?.length ?? 0,
+      uniqueCustomers: agg?.customerIds?.length ?? 0,
+    };
+
+    return NextResponse.json({ logs, total, page, limit, totalPages, stats });
   } catch (err) {
     console.error("[supplies GET]", err);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

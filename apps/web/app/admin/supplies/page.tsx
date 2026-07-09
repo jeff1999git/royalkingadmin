@@ -8,6 +8,7 @@ import {
   useAdminCustomers,
   useAdminDrivers,
   useAdminQueryClient,
+  type PaginatedSupplyLogsWithStats,
 } from "../../hooks/useAdminQueries";
 
 interface DriverOption {
@@ -76,6 +77,7 @@ type Filters = {
   month: string;
   driver: string;
   vehicle: string;
+  paymentStatus: "" | "cash" | "upi" | "not_paid";
 };
 
 function todayInputValue() {
@@ -124,7 +126,6 @@ function maskText(value: string, max = 12) {
 }
 
 export default function SuppliesPage() {
-  const GROUPS_PER_PAGE = 5;
   const maxDate = todayInputValue();
   const maxMonth = currentMonthValue();
   const [supplyTab, setSupplyTab] = useState<"water" | "cash">("water");
@@ -135,6 +136,7 @@ export default function SuppliesPage() {
     month: maxMonth,
     driver: "",
     vehicle: "",
+    paymentStatus: "",
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -171,12 +173,12 @@ export default function SuppliesPage() {
     data: queriedLogs,
     isLoading: logsLoading,
     isError: logsError,
-  } = useAdminAddedSupplies(filters);
+  } = useAdminAddedSupplies(filters, waterPage);
   const {
     data: queriedCashLogs,
     isLoading: cashLogsLoading,
     isError: cashLogsError,
-  } = useAdminCashCredits(filters);
+  } = useAdminCashCredits(filters, cashPage);
   const queryClient = useAdminQueryClient();
 
   async function downloadImageToDevice(imageUrl?: string | null) {
@@ -204,6 +206,12 @@ export default function SuppliesPage() {
     }
   }
 
+  // Reset to page 1 when filters change
+  useEffect(() => {
+    setWaterPage(1);
+    setCashPage(1);
+  }, [filters]);
+
   useEffect(() => {
     const isWater = supplyTab === "water";
     setLoading(isWater ? logsLoading : cashLogsLoading);
@@ -216,14 +224,15 @@ export default function SuppliesPage() {
     }
   }, [cashLogsError, cashLogsLoading, logsError, logsLoading, queriedCashLogs, queriedLogs, supplyTab]);
 
-  const effectiveLogs = useMemo(
-    () => (supplyTab === "water" ? queriedLogs ?? [] : queriedCashLogs ?? []),
-    [queriedCashLogs, queriedLogs, supplyTab],
-  );
+  const activeData: PaginatedSupplyLogsWithStats | undefined = supplyTab === "water" ? queriedLogs : queriedCashLogs;
+  const effectiveLogs = activeData?.logs ?? [];
+  const totalPages = activeData?.totalPages ?? 1;
+  const currentPage = supplyTab === "water" ? waterPage : cashPage;
 
   const groupedLogs = useMemo(() => {
+    const serialBase = (activeData?.page ?? 1 - 1) * 100;
     const serialById = new Map(
-      effectiveLogs.map((log, index) => [log._id, index + 1] as const),
+      effectiveLogs.map((log, index) => [log._id, serialBase + index + 1] as const),
     );
     const groups = new Map<string, SupplyLog[]>();
     for (const log of effectiveLogs) {
@@ -247,49 +256,19 @@ export default function SuppliesPage() {
         };
       })
       .sort((a, b) => b.dateSortValue - a.dateSortValue);
-  }, [effectiveLogs]);
-
-  const totalPages = Math.max(1, Math.ceil(groupedLogs.length / GROUPS_PER_PAGE));
-  const currentPage = supplyTab === "water" ? waterPage : cashPage;
-  const pagedGroupedLogs = useMemo(() => {
-    const start = (currentPage - 1) * GROUPS_PER_PAGE;
-    return groupedLogs.slice(start, start + GROUPS_PER_PAGE);
-  }, [currentPage, groupedLogs]);
-
-  useEffect(() => {
-    if (supplyTab === "water") {
-      setWaterPage((current) => Math.min(current, totalPages));
-    } else {
-      setCashPage((current) => Math.min(current, totalPages));
-    }
-  }, [supplyTab, totalPages]);
+  }, [effectiveLogs, activeData?.page]);
 
   const summary = useMemo(() => {
-    const totalAmount = effectiveLogs.reduce(
-      (sum, log) => sum + (log.amount ?? 0),
-      0,
-    );
-    const totalCans = effectiveLogs.reduce(
-      (sum, log) => sum + (log.cansDelivered ?? 0),
-      0,
-    );
-    const totalCansTakenBack = effectiveLogs.reduce(
-      (sum, log) => sum + (log.cansTakenBack ?? 0),
-      0,
-    );
+    const s = activeData?.stats;
     return {
-      total: effectiveLogs.length,
-      uniqueDrivers: new Set(
-        effectiveLogs.map((l) => l.driver?._id ?? ""),
-      ).size,
-      uniqueCustomers: new Set(
-        effectiveLogs.map((l) => l.customer?._id ?? l.pointName ?? ""),
-      ).size,
-      totalCans,
-      totalCansTakenBack,
-      totalAmount,
+      total: activeData?.total ?? 0,
+      uniqueDrivers: s?.uniqueDrivers ?? 0,
+      uniqueCustomers: s?.uniqueCustomers ?? 0,
+      totalCans: s?.totalCans ?? 0,
+      totalCansTakenBack: s?.totalCansTakenBack ?? 0,
+      totalAmount: s?.totalAmount ?? 0,
     };
-  }, [effectiveLogs]);
+  }, [activeData]);
 
   function exportFilenameBase() {
     const datePart = filters.date || filters.month || new Date().toISOString().slice(0, 10);
@@ -561,7 +540,7 @@ export default function SuppliesPage() {
   }
 
   function clearFilters() {
-    setFilters({ date: "", month: maxMonth, driver: "", vehicle: "" });
+    setFilters({ date: "", month: maxMonth, driver: "", vehicle: "", paymentStatus: "" });
   }
 
   function openAddForm() {
@@ -671,12 +650,14 @@ export default function SuppliesPage() {
 
       const listQueryKey =
         editingLog.logType === "cash"
-          ? ["admin", "supplies", "cash-credits", filters]
-          : ["admin", "supplies", "added", filters];
+          ? ["admin", "supplies", "cash-credits", filters, cashPage]
+          : ["admin", "supplies", "added", filters, waterPage];
 
-      queryClient.setQueryData<SupplyLog[]>(
+      queryClient.setQueryData<PaginatedSupplyLogsWithStats>(
         listQueryKey,
-        (prev) => prev?.map((log) => log._id === updated._id ? updatedWithFormatted : log) ?? prev,
+        (prev) => prev
+          ? { ...prev, logs: prev.logs.map((log) => log._id === updated._id ? updatedWithFormatted : log) }
+          : prev,
       );
       setSelectedLog((prev) => prev && prev._id === updated._id ? updatedWithFormatted : prev);
       setEditingLog(null);
@@ -833,6 +814,22 @@ export default function SuppliesPage() {
               ))}
             </select>
           </div>
+          {supplyTab === "water" && (
+            <div className="form-group">
+              <label className="form-label" htmlFor="filterPaymentStatus">Payment Method</label>
+              <select
+                id="filterPaymentStatus"
+                className="form-select"
+                value={filters.paymentStatus}
+                onChange={(e) => setFilters((f) => ({ ...f, paymentStatus: e.target.value as Filters["paymentStatus"] }))}
+              >
+                <option value="">All</option>
+                <option value="cash">Cash</option>
+                <option value="upi">UPI</option>
+                <option value="not_paid">Not Paid</option>
+              </select>
+            </div>
+          )}
         </div>
 
         <div style={{ display: "flex", alignItems: "end" }}>
@@ -883,7 +880,7 @@ export default function SuppliesPage() {
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: "0.9rem" }}>
-          {pagedGroupedLogs.map((group) => (
+          {groupedLogs.map((group) => (
             <div key={group.key}>
               <div className="flex items-center justify-between" style={{ marginBottom: "0.55rem" }}>
                 <h3 style={{ fontSize: "0.95rem", color: "var(--text-secondary)" }}>{group.label}</h3>

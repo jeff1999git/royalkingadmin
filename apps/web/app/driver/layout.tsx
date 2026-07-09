@@ -115,8 +115,7 @@ export default function DriverLayout({ children }: { children: ReactNode }) {
     }
 
     async function handleSignOut() {
-        await signOut({ redirect: false });
-        router.push("/");
+        await signOut({ callbackUrl: "/" });
     }
 
     async function handleOdometerSubmit(e: FormEvent) {
