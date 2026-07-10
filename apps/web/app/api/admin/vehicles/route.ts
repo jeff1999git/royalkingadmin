@@ -11,7 +11,10 @@ export async function GET() {
   }
 
   await connectToDatabase();
-  const vehicles = await Vehicle.find().sort({ createdAt: -1 }).lean();
+  const vehicles = await Vehicle.find()
+    .select("-odometerHistory")
+    .sort({ createdAt: -1 })
+    .lean();
   return NextResponse.json(vehicles);
 }
 

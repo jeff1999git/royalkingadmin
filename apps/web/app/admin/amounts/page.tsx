@@ -1,6 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { useAdminDrivers, useAdminVehicles } from "../../hooks/useAdminQueries";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -491,43 +493,26 @@ export default function AnalyticsPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [draft, setDraft] = useState<FilterState>(DEFAULT_FILTERS);
 
-  const [data, setData] = useState<AnalyticsData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  // Dropdown data — shared React Query cache with the rest of the admin pages
+  const { data: driversData } = useAdminDrivers();
+  const { data: vehiclesData } = useAdminVehicles();
+  const drivers = useMemo<Driver[]>(() => driversData ?? [], [driversData]);
+  const vehicles = useMemo<VehicleItem[]>(() => vehiclesData ?? [], [vehiclesData]);
 
-  const [drivers, setDrivers] = useState<Driver[]>([]);
-  const [vehicles, setVehicles] = useState<VehicleItem[]>([]);
-
-  // Fetch dropdown data once
-  useEffect(() => {
-    void fetch("/api/admin/drivers")
-      .then((r) => r.json())
-      .then((d: Driver[]) => setDrivers(Array.isArray(d) ? d : []))
-      .catch(() => {});
-    void fetch("/api/admin/vehicles")
-      .then((r) => r.json())
-      .then((v: VehicleItem[]) => setVehicles(Array.isArray(v) ? v : []))
-      .catch(() => {});
-  }, []);
-
-  const loadAnalytics = useCallback(async (f: FilterState) => {
-    setLoading(true);
-    setError("");
-    try {
-      const res = await fetch(`/api/admin/analytics?${buildQuery(f)}`, { cache: "no-store" });
-      if (!res.ok) throw new Error("Failed");
-      const json = (await res.json()) as AnalyticsData;
-      setData(json);
-    } catch {
-      setError("Failed to load analytics data.");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void loadAnalytics(filters);
-  }, [filters, loadAnalytics]);
+  const {
+    data,
+    isLoading: loading,
+    isError,
+  } = useQuery<AnalyticsData>({
+    queryKey: ["admin", "analytics", filters],
+    staleTime: 1000 * 60 * 2,
+    placeholderData: keepPreviousData,
+    queryFn: async () => {
+      const res = await fetch(`/api/admin/analytics?${buildQuery(filters)}`, { cache: "no-store" });
+      if (!res.ok) throw new Error("Failed to load analytics");
+      return (await res.json()) as AnalyticsData;
+    },
+  });
 
   function openModal() {
     setDraft(filters);
@@ -638,7 +623,7 @@ export default function AnalyticsPage() {
         )}
       </div>
 
-      {error && <div className="alert alert-error" style={{ marginBottom: "1rem" }}>{error}</div>}
+      {isError && <div className="alert alert-error" style={{ marginBottom: "1rem" }}>Failed to load analytics data.</div>}
 
       {/* Summary stat cards — always 3 columns, responsive sizing via style tag */}
       <style dangerouslySetInnerHTML={{ __html: `

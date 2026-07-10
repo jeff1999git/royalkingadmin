@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { signOut, useSession } from "next-auth/react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 
@@ -43,7 +43,6 @@ const navItems = [
 
 export default function AdminLayout({ children }: { children: ReactNode }) {
     const pathname = usePathname();
-    const router = useRouter();
     const { data: session } = useSession();
     const [profileOpen, setProfileOpen] = useState(false);
     const profileRef = useRef<HTMLDivElement>(null);
@@ -104,8 +103,7 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
     }
 
     async function handleSignOut() {
-        await signOut({ redirect: false });
-        router.push("/");
+        await signOut({ callbackUrl: "/" });
     }
 
     // Close dropdown when clicking outside

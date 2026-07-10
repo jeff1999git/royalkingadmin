@@ -1,12 +1,10 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { signOut, useSession } from "next-auth/react";
 import type { FormEvent, ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 
 export default function DriverLayout({ children }: { children: ReactNode }) {
-    const router = useRouter();
     const { data: session, status } = useSession();
     const [dropdownOpen, setDropdownOpen] = useState(false);
 
@@ -17,7 +15,6 @@ export default function DriverLayout({ children }: { children: ReactNode }) {
     const [odometerValue, setOdometerValue] = useState("");
     const [odometerSubmitting, setOdometerSubmitting] = useState(false);
     const [odometerError, setOdometerError] = useState("");
-    const [odometerSuccess, setOdometerSuccess] = useState("");
     const [odometerHistory, setOdometerHistory] = useState<{ reading: number; recordedAt: string }[]>([]);
     const [historyLoading, setHistoryLoading] = useState(false);
     const [odometerFilledToday, setOdometerFilledToday] = useState(false);
@@ -115,14 +112,12 @@ export default function DriverLayout({ children }: { children: ReactNode }) {
     }
 
     async function handleSignOut() {
-        await signOut({ redirect: false });
-        router.push("/");
+        await signOut({ callbackUrl: "/" });
     }
 
     async function handleOdometerSubmit(e: FormEvent) {
         e.preventDefault();
         setOdometerError("");
-        setOdometerSuccess("");
         setOdometerSubmitting(true);
 
         const res = await fetch("/api/driver/vehicles/odometer", {
@@ -144,7 +139,6 @@ export default function DriverLayout({ children }: { children: ReactNode }) {
         setOdometerRequired(false);
         setOdometerOpen(false);
         setOdometerValue("");
-        setOdometerSuccess("");
     }
 
     const showOdometerModal = odometerRequired || odometerOpen;
@@ -237,7 +231,6 @@ export default function DriverLayout({ children }: { children: ReactNode }) {
                                 onClick={() => {
                                     setDropdownOpen(false);
                                     setOdometerError("");
-                                    setOdometerSuccess("");
                                     setOdometerHistory([]);
                                     setOdometerOpen(true);
                                     setHistoryLoading(true);
@@ -403,7 +396,7 @@ export default function DriverLayout({ children }: { children: ReactNode }) {
                         display: "flex", alignItems: "center", justifyContent: "center",
                         padding: "1rem", zIndex: 300,
                     }}
-                    onClick={isBlocking ? undefined : () => { setOdometerOpen(false); setOdometerError(""); setOdometerSuccess(""); }}
+                    onClick={isBlocking ? undefined : () => { setOdometerOpen(false); setOdometerError(""); }}
                 >
                     <div
                         className="card"
@@ -419,7 +412,7 @@ export default function DriverLayout({ children }: { children: ReactNode }) {
                                     <button
                                         type="button"
                                         className="btn btn-sm btn-secondary"
-                                        onClick={() => { setOdometerOpen(false); setOdometerError(""); setOdometerSuccess(""); }}
+                                        onClick={() => { setOdometerOpen(false); setOdometerError(""); }}
                                     >
                                         Close
                                     </button>

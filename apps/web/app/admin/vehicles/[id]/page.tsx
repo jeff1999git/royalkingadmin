@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 interface OdometerEntry {
   reading: number;
@@ -209,7 +209,7 @@ export default function VehicleDetailPage() {
   const [deleting, setDeleting] = useState(false);
   const [actionError, setActionError] = useState("");
 
-  async function load() {
+  const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
@@ -226,9 +226,9 @@ export default function VehicleDetailPage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [id]);
 
-  useEffect(() => { void load(); }, [id]);
+  useEffect(() => { void load(); }, [load]);
 
   function openEdit() {
     if (!vehicle) return;

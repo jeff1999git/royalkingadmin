@@ -1,24 +1,10 @@
 "use client";
 
-import { useState, FormEvent } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState, FormEvent, useEffect } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useAdminPaginatedCustomers, type Customer } from "../../hooks/useAdminQueries";
 
-interface Customer {
-  _id: string;
-  name: string;
-  phone: string;
-  email?: string;
-  address?: string;
-  area?: string;
-  locationType?: "home" | "office" | "both";
-  subscriptionCans: number;
-  cashPerCan?: number;
-  securityDeposit?: number;
-  isActive: boolean;
-  isDeleted?: boolean;
-  registeredDate?: string;
-  createdAt: string;
-}
+const PAGE_LIMIT = 30;
 
 function todayISO(): string {
   const d = new Date();
@@ -32,25 +18,47 @@ function isoToDateInput(iso?: string | null): string {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
 }
 
-const CUSTOMERS_KEY = ["admin", "customers"];
-
-function useAdminCustomers() {
-  return useQuery<Customer[]>({
-    queryKey: CUSTOMERS_KEY,
-    staleTime: 1000 * 60 * 5,
-    queryFn: async () => {
-      const res = await fetch("/api/admin/customers", { cache: "no-store" });
-      if (!res.ok) throw new Error("Failed to fetch customers");
-      const data = (await res.json()) as unknown;
-      return Array.isArray(data) ? (data as Customer[]) : [];
-    },
-  });
-}
-
 const locationTypeLabel = (lt?: string) =>
   lt === "home" ? "Home" : lt === "office" ? "Office" : lt === "both" ? "Both" : undefined;
 
+const PAGINATED_KEY = ["admin", "customers", "paginated"];
+
 export default function CustomersPage() {
+  const [page, setPage] = useState(1);
+  const [searchInput, setSearchInput] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [filterArea, setFilterArea] = useState("");
+
+  // Debounce search by 400ms and reset to page 1
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setDebouncedSearch(searchInput);
+      setPage(1);
+    }, 400);
+    return () => clearTimeout(t);
+  }, [searchInput]);
+
+  // Reset to page 1 when area filter changes
+  useEffect(() => { setPage(1); }, [filterArea]);
+
+  const queryClient = useQueryClient();
+
+  const { data, isLoading } = useAdminPaginatedCustomers({
+    page,
+    limit: PAGE_LIMIT,
+    search: debouncedSearch,
+    area: filterArea,
+  });
+
+  const customers = data?.customers ?? [];
+  const active = customers.filter((c) => c.isActive);
+  const inactive = customers.filter((c) => !c.isActive);
+  const areas = data?.areas ?? [];
+  const totalPages = data?.totalPages ?? 1;
+  const activeCount = data?.activeCount ?? 0;
+  const inactiveCount = data?.inactiveCount ?? 0;
+
+  // ── Form state ───────────────────────────────────────────────────────────────
   const [showForm, setShowForm] = useState(false);
   const [formData, setFormData] = useState({
     name: "",
@@ -68,6 +76,7 @@ export default function CustomersPage() {
   const [formSuccess, setFormSuccess] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
+  // ── Edit state ───────────────────────────────────────────────────────────────
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [editData, setEditData] = useState({
     name: "",
@@ -85,18 +94,20 @@ export default function CustomersPage() {
   const [editError, setEditError] = useState("");
   const [editSaving, setEditSaving] = useState(false);
 
+  // ── Other UI state ───────────────────────────────────────────────────────────
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [confirmDeleteCustomer, setConfirmDeleteCustomer] = useState<Customer | null>(null);
   const [deletingCustomer, setDeletingCustomer] = useState(false);
   const [pageError, setPageError] = useState("");
-  const [searchText, setSearchText] = useState("");
-  const [filterArea, setFilterArea] = useState("");
-
-  const { data: customers, isLoading } = useAdminCustomers();
-  const queryClient = useQueryClient();
 
   async function safeJson(res: Response) {
     try { return await res.json() as { error?: string }; } catch { return {}; }
+  }
+
+  function invalidateCustomers() {
+    void queryClient.invalidateQueries({ queryKey: PAGINATED_KEY });
+    // also invalidate the full-list used in dropdowns elsewhere
+    void queryClient.invalidateQueries({ queryKey: ["admin", "customers"] });
   }
 
   async function handleSubmit(e: FormEvent) {
@@ -121,12 +132,12 @@ export default function CustomersPage() {
           registeredDate: formData.registeredDate || undefined,
         }),
       });
-      const data = await safeJson(res);
+      const d = await safeJson(res);
       setSubmitting(false);
-      if (!res.ok) { setFormError(data.error ?? "Failed to create customer"); return; }
+      if (!res.ok) { setFormError(d.error ?? "Failed to create customer"); return; }
       setFormSuccess("Customer created!");
       setFormData({ name: "", phone: "", email: "", address: "", area: "", locationType: "home", subscriptionCans: "1", cashPerCan: "", securityDeposit: "", registeredDate: todayISO() });
-      await queryClient.invalidateQueries({ queryKey: CUSTOMERS_KEY });
+      invalidateCustomers();
       setTimeout(() => { setShowForm(false); setFormSuccess(""); }, 1500);
     } catch {
       setSubmitting(false);
@@ -181,12 +192,7 @@ export default function CustomersPage() {
         setEditError(errData.error ?? "Failed to update customer");
         return;
       }
-      const updated = (await res.json()) as Customer;
-      // Immediately patch the cache so re-opening edit shows fresh values
-      queryClient.setQueryData<Customer[]>(CUSTOMERS_KEY, (old) =>
-        old ? old.map((c) => (c._id === updated._id ? updated : c)) : old
-      );
-      void queryClient.invalidateQueries({ queryKey: CUSTOMERS_KEY });
+      invalidateCustomers();
       setEditingCustomer(null);
     } catch {
       setEditSaving(false);
@@ -205,28 +211,12 @@ export default function CustomersPage() {
       setDeletingCustomer(false);
       if (!res.ok) { setPageError("Failed to delete customer."); return; }
       setSelectedCustomer(null);
-      await queryClient.invalidateQueries({ queryKey: CUSTOMERS_KEY });
+      invalidateCustomers();
     } catch {
       setDeletingCustomer(false);
       setPageError("Failed to delete customer. Please try again.");
     }
   }
-
-  const areas = Array.from(new Set((customers ?? []).map((c) => c.area).filter(Boolean) as string[])).sort();
-
-  const filtered = (customers ?? []).filter((c) => {
-    const matchSearch =
-      !searchText ||
-      c.name.toLowerCase().includes(searchText.toLowerCase()) ||
-      c.phone.includes(searchText) ||
-      (c.email ?? "").toLowerCase().includes(searchText.toLowerCase()) ||
-      (c.area ?? "").toLowerCase().includes(searchText.toLowerCase());
-    const matchArea = !filterArea || c.area === filterArea;
-    return matchSearch && matchArea;
-  });
-
-  const active = filtered.filter((c) => c.isActive);
-  const inactive = filtered.filter((c) => !c.isActive);
 
   return (
     <div>
@@ -246,6 +236,7 @@ export default function CustomersPage() {
 
       {pageError && <div className="alert alert-error" style={{ marginBottom: "1rem" }}>{pageError}</div>}
 
+      {/* Search + Filter */}
       <div className="card" style={{ marginBottom: "1rem" }}>
         <div className="grid-2">
           <div className="form-group">
@@ -254,8 +245,8 @@ export default function CustomersPage() {
               id="searchCustomer"
               className="form-input"
               placeholder="Name, phone, email, area..."
-              value={searchText}
-              onChange={(e) => setSearchText(e.target.value)}
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
             />
           </div>
           <div className="form-group">
@@ -273,28 +264,29 @@ export default function CustomersPage() {
             </select>
           </div>
         </div>
-        {(searchText || filterArea) && (
+        {(searchInput || filterArea) && (
           <button
             type="button"
             className="btn btn-secondary btn-sm"
             style={{ marginTop: "0.5rem" }}
-            onClick={() => { setSearchText(""); setFilterArea(""); }}
+            onClick={() => { setSearchInput(""); setFilterArea(""); }}
           >
             Clear Filters
           </button>
         )}
       </div>
 
+      {/* Customer List */}
       {isLoading ? (
         <p style={{ color: "var(--text-muted)" }}>Loading customers...</p>
-      ) : filtered.length === 0 ? (
+      ) : customers.length === 0 ? (
         <div className="card empty-state">No customers found.</div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
           {active.length > 0 && (
             <div>
               <h3 style={{ marginBottom: "0.6rem", fontSize: "0.9rem", color: "var(--text-secondary)" }}>
-                Active ({active.length})
+                Active ({activeCount})
               </h3>
               <div className="table-wrapper">
                 <table>
@@ -340,20 +332,8 @@ export default function CustomersPage() {
                         <td style={{ fontWeight: 700 }}>{customer.subscriptionCans}</td>
                         <td>
                           <div style={{ display: "flex", gap: "0.4rem" }}>
-                            <button
-                              type="button"
-                              className="btn btn-sm btn-secondary"
-                              onClick={() => openEdit(customer)}
-                            >
-                              Edit
-                            </button>
-                            <button
-                              type="button"
-                              className="btn btn-sm btn-danger"
-                              onClick={() => setConfirmDeleteCustomer(customer)}
-                            >
-                              Delete
-                            </button>
+                            <button type="button" className="btn btn-sm btn-secondary" onClick={() => openEdit(customer)}>Edit</button>
+                            <button type="button" className="btn btn-sm btn-danger" onClick={() => setConfirmDeleteCustomer(customer)}>Delete</button>
                           </div>
                         </td>
                       </tr>
@@ -367,7 +347,7 @@ export default function CustomersPage() {
           {inactive.length > 0 && (
             <div>
               <h3 style={{ marginBottom: "0.6rem", fontSize: "0.9rem", color: "var(--text-secondary)" }}>
-                Inactive ({inactive.length})
+                Inactive ({inactiveCount})
               </h3>
               <div className="table-wrapper">
                 <table>
@@ -399,20 +379,8 @@ export default function CustomersPage() {
                         <td>{customer.subscriptionCans}</td>
                         <td>
                           <div style={{ display: "flex", gap: "0.4rem" }}>
-                            <button
-                              type="button"
-                              className="btn btn-sm btn-secondary"
-                              onClick={() => openEdit(customer)}
-                            >
-                              Edit
-                            </button>
-                            <button
-                              type="button"
-                              className="btn btn-sm btn-danger"
-                              onClick={() => setConfirmDeleteCustomer(customer)}
-                            >
-                              Delete
-                            </button>
+                            <button type="button" className="btn btn-sm btn-secondary" onClick={() => openEdit(customer)}>Edit</button>
+                            <button type="button" className="btn btn-sm btn-danger" onClick={() => setConfirmDeleteCustomer(customer)}>Delete</button>
                           </div>
                         </td>
                       </tr>
@@ -420,6 +388,31 @@ export default function CustomersPage() {
                   </tbody>
                 </table>
               </div>
+            </div>
+          )}
+
+          {/* Pagination */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between" style={{ marginTop: "0.5rem" }}>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                disabled={page <= 1}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+              >
+                Prev
+              </button>
+              <span style={{ fontSize: "0.85rem", color: "var(--text-secondary)" }}>
+                Page {page} of {totalPages} &nbsp;·&nbsp; {data?.total ?? 0} customers
+              </span>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                disabled={page >= totalPages}
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              >
+                Next
+              </button>
             </div>
           )}
         </div>
@@ -455,13 +448,7 @@ export default function CustomersPage() {
                   <div style={{ display: "flex", gap: "1.5rem", marginTop: "0.4rem" }}>
                     {(["home", "office", "both"] as const).map((lt) => (
                       <label key={lt} style={{ display: "flex", alignItems: "center", gap: "0.4rem", cursor: "pointer", fontWeight: formData.locationType === lt ? 700 : 500 }}>
-                        <input
-                          type="radio"
-                          name="cLocationType"
-                          value={lt}
-                          checked={formData.locationType === lt}
-                          onChange={() => setFormData((f) => ({ ...f, locationType: lt }))}
-                        />
+                        <input type="radio" name="cLocationType" value={lt} checked={formData.locationType === lt} onChange={() => setFormData((f) => ({ ...f, locationType: lt }))} />
                         {lt === "home" ? "Home" : lt === "office" ? "Office" : "Both"}
                       </label>
                     ))}
@@ -489,14 +476,7 @@ export default function CustomersPage() {
                 </div>
                 <div className="form-group">
                   <label className="form-label" htmlFor="cRegisteredDate">Added Date *</label>
-                  <input
-                    id="cRegisteredDate"
-                    className="form-input"
-                    type="date"
-                    value={formData.registeredDate}
-                    onChange={(e) => setFormData((f) => ({ ...f, registeredDate: e.target.value }))}
-                    required
-                  />
+                  <input id="cRegisteredDate" className="form-input" type="date" value={formData.registeredDate} onChange={(e) => setFormData((f) => ({ ...f, registeredDate: e.target.value }))} required />
                 </div>
               </div>
               {formError && <div className="alert alert-error">{formError}</div>}
@@ -521,54 +501,15 @@ export default function CustomersPage() {
               <button type="button" className="btn btn-sm btn-secondary" onClick={() => setSelectedCustomer(null)}>Close</button>
             </div>
             <div className="flex-col gap-2">
-              <div>
-                <div className="text-sm text-muted">Name</div>
-                <div style={{ fontWeight: 600 }}>{selectedCustomer.name}</div>
-              </div>
-              <div>
-                <div className="text-sm text-muted">Phone</div>
-                <div style={{ fontWeight: 600 }}>{selectedCustomer.phone}</div>
-              </div>
-              {selectedCustomer.email && (
-                <div>
-                  <div className="text-sm text-muted">Email</div>
-                  <div style={{ fontWeight: 500 }}>{selectedCustomer.email}</div>
-                </div>
-              )}
-              {selectedCustomer.locationType && (
-                <div>
-                  <div className="text-sm text-muted">Type</div>
-                  <div style={{ fontWeight: 600 }}>{locationTypeLabel(selectedCustomer.locationType)}</div>
-                </div>
-              )}
-              {selectedCustomer.address && (
-                <div>
-                  <div className="text-sm text-muted">Location</div>
-                  <div style={{ fontWeight: 500 }}>{selectedCustomer.address}</div>
-                </div>
-              )}
-              {selectedCustomer.area && (
-                <div>
-                  <div className="text-sm text-muted">Area</div>
-                  <div style={{ fontWeight: 600 }}>{selectedCustomer.area}</div>
-                </div>
-              )}
-              <div>
-                <div className="text-sm text-muted">Subscription</div>
-                <div style={{ fontWeight: 600 }}>{selectedCustomer.subscriptionCans} can{selectedCustomer.subscriptionCans !== 1 ? "s" : ""}/day</div>
-              </div>
-              {selectedCustomer.cashPerCan !== undefined && (
-                <div>
-                  <div className="text-sm text-muted">Cash Per Can</div>
-                  <div style={{ fontWeight: 600 }}>₹{selectedCustomer.cashPerCan}</div>
-                </div>
-              )}
-              {selectedCustomer.securityDeposit !== undefined && (
-                <div>
-                  <div className="text-sm text-muted">Security Deposit</div>
-                  <div style={{ fontWeight: 600 }}>₹{selectedCustomer.securityDeposit}</div>
-                </div>
-              )}
+              <div><div className="text-sm text-muted">Name</div><div style={{ fontWeight: 600 }}>{selectedCustomer.name}</div></div>
+              <div><div className="text-sm text-muted">Phone</div><div style={{ fontWeight: 600 }}>{selectedCustomer.phone}</div></div>
+              {selectedCustomer.email && <div><div className="text-sm text-muted">Email</div><div style={{ fontWeight: 500 }}>{selectedCustomer.email}</div></div>}
+              {selectedCustomer.locationType && <div><div className="text-sm text-muted">Type</div><div style={{ fontWeight: 600 }}>{locationTypeLabel(selectedCustomer.locationType)}</div></div>}
+              {selectedCustomer.address && <div><div className="text-sm text-muted">Location</div><div style={{ fontWeight: 500 }}>{selectedCustomer.address}</div></div>}
+              {selectedCustomer.area && <div><div className="text-sm text-muted">Area</div><div style={{ fontWeight: 600 }}>{selectedCustomer.area}</div></div>}
+              <div><div className="text-sm text-muted">Subscription</div><div style={{ fontWeight: 600 }}>{selectedCustomer.subscriptionCans} can{selectedCustomer.subscriptionCans !== 1 ? "s" : ""}/day</div></div>
+              {selectedCustomer.cashPerCan !== undefined && <div><div className="text-sm text-muted">Cash Per Can</div><div style={{ fontWeight: 600 }}>₹{selectedCustomer.cashPerCan}</div></div>}
+              {selectedCustomer.securityDeposit !== undefined && <div><div className="text-sm text-muted">Security Deposit</div><div style={{ fontWeight: 600 }}>₹{selectedCustomer.securityDeposit}</div></div>}
               <div>
                 <div className="text-sm text-muted">Status</div>
                 <div style={{ fontWeight: 600, color: selectedCustomer.isActive ? "var(--accent-primary)" : "var(--text-muted)" }}>
@@ -583,26 +524,14 @@ export default function CustomersPage() {
               </div>
             </div>
             <div className="flex items-center justify-between" style={{ marginTop: "1.25rem", gap: "0.75rem", flexWrap: "wrap" }}>
-              <button
-                type="button"
-                className="btn btn-danger"
-                disabled={deletingCustomer}
-                onClick={() => setConfirmDeleteCustomer(selectedCustomer)}
-              >
-                Delete
-              </button>
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={() => openEdit(selectedCustomer)}
-              >
-                Edit
-              </button>
+              <button type="button" className="btn btn-danger" disabled={deletingCustomer} onClick={() => setConfirmDeleteCustomer(selectedCustomer)}>Delete</button>
+              <button type="button" className="btn btn-primary" onClick={() => openEdit(selectedCustomer)}>Edit</button>
             </div>
           </div>
         </div>
       )}
 
+      {/* Confirm Delete Modal */}
       {confirmDeleteCustomer && (
         <div
           style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem", zIndex: 400 }}
@@ -655,13 +584,7 @@ export default function CustomersPage() {
                 <div style={{ display: "flex", gap: "1.5rem", marginTop: "0.4rem" }}>
                   {(["home", "office", "both"] as const).map((lt) => (
                     <label key={lt} style={{ display: "flex", alignItems: "center", gap: "0.4rem", cursor: "pointer", fontWeight: editData.locationType === lt ? 700 : 500 }}>
-                      <input
-                        type="radio"
-                        name="eLocationType"
-                        value={lt}
-                        checked={editData.locationType === lt}
-                        onChange={() => setEditData((d) => ({ ...d, locationType: lt }))}
-                      />
+                      <input type="radio" name="eLocationType" value={lt} checked={editData.locationType === lt} onChange={() => setEditData((d) => ({ ...d, locationType: lt }))} />
                       {lt === "home" ? "Home" : lt === "office" ? "Office" : "Both"}
                     </label>
                   ))}
@@ -689,13 +612,7 @@ export default function CustomersPage() {
               </div>
               <div className="form-group">
                 <label className="form-label" htmlFor="eRegisteredDate">Added Date</label>
-                <input
-                  id="eRegisteredDate"
-                  className="form-input"
-                  type="date"
-                  value={editData.registeredDate}
-                  onChange={(e) => setEditData((d) => ({ ...d, registeredDate: e.target.value }))}
-                />
+                <input id="eRegisteredDate" className="form-input" type="date" value={editData.registeredDate} onChange={(e) => setEditData((d) => ({ ...d, registeredDate: e.target.value }))} />
               </div>
               <div className="form-group" style={{ gridColumn: "1 / -1" }}>
                 <label className="form-label" htmlFor="eStatus">Status</label>
