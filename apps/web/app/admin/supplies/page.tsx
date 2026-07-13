@@ -2,6 +2,7 @@
 
 /* eslint-disable @next/next/no-img-element */
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { cloudinaryAuto, cloudinaryThumb } from "../../../lib/imageUrl";
 import {
   useAdminAddedSupplies,
@@ -1224,7 +1225,17 @@ export default function SuppliesPage() {
               {(selectedLog.customer?.name || selectedLog.pointName) && (
                 <div>
                   <div className="text-sm text-muted">Customer</div>
-                  <div style={{ fontWeight: 600 }}>{selectedLog.customer?.name ?? selectedLog.pointName}</div>
+                  <div style={{ fontWeight: 600 }}>
+                    {selectedLog.customer?.name ?? selectedLog.pointName}
+                    {selectedLog.customer?._id && (
+                      <Link
+                        href={`/admin/customers/${selectedLog.customer._id}`}
+                        style={{ marginLeft: "0.6rem", fontSize: "0.8rem", fontWeight: 600, color: "var(--accent-primary)" }}
+                      >
+                        View History
+                      </Link>
+                    )}
+                  </div>
                   {selectedLog.customer?.area && (
                     <div className="text-sm text-muted">{selectedLog.customer.area}</div>
                   )}

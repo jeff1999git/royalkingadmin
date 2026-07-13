@@ -5,6 +5,29 @@ import { authOptions } from "../../../../../lib/auth";
 import { connectToDatabase } from "../../../../../lib/mongodb";
 import Customer from "../../../../../models/Customer";
 
+export async function GET(
+  _req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const session = await getServerSession(authOptions);
+  if (!session || session.user.role !== "admin") {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const { id } = await params;
+  if (!Types.ObjectId.isValid(id)) {
+    return NextResponse.json({ error: "Invalid customer id." }, { status: 400 });
+  }
+
+  await connectToDatabase();
+  const customer = await Customer.findById(id).lean();
+  if (!customer) {
+    return NextResponse.json({ error: "Customer not found." }, { status: 404 });
+  }
+
+  return NextResponse.json(customer);
+}
+
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }

@@ -48,6 +48,7 @@ export async function GET(req: NextRequest) {
   const daysParam = req.nextUrl.searchParams.get("days");
   const driverParam = req.nextUrl.searchParams.get("driver");
   const vehicleParam = req.nextUrl.searchParams.get("vehicle");
+  const customerParam = req.nextUrl.searchParams.get("customer");
   const pageParam = req.nextUrl.searchParams.get("page");
   const limitParam = req.nextUrl.searchParams.get("limit");
   const amountStatusParam = req.nextUrl.searchParams.get("amountStatus");
@@ -58,6 +59,7 @@ export async function GET(req: NextRequest) {
     suppliedAt?: { $gte?: Date; $lte?: Date; $lt?: Date };
     driver?: string;
     vehicle?: string;
+    customer?: string;
     amount?: { $exists?: boolean; $ne?: null };
     logType?: "water" | "cash";
     paymentStatus?: "upi" | "not_paid" | { $nin: string[] };
@@ -105,6 +107,13 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Invalid vehicle id." }, { status: 400 });
     }
     query.vehicle = vehicleParam;
+  }
+
+  if (customerParam) {
+    if (!Types.ObjectId.isValid(customerParam)) {
+      return NextResponse.json({ error: "Invalid customer id." }, { status: 400 });
+    }
+    query.customer = customerParam;
   }
 
   if (amountStatusParam === "pending") {
