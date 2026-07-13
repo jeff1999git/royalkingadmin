@@ -45,8 +45,10 @@ export async function GET(req: NextRequest) {
 
   const dateParam = req.nextUrl.searchParams.get("date");
   const monthParam = req.nextUrl.searchParams.get("month");
+  const daysParam = req.nextUrl.searchParams.get("days");
   const driverParam = req.nextUrl.searchParams.get("driver");
   const vehicleParam = req.nextUrl.searchParams.get("vehicle");
+  const customerParam = req.nextUrl.searchParams.get("customer");
   const pageParam = req.nextUrl.searchParams.get("page");
   const limitParam = req.nextUrl.searchParams.get("limit");
   const amountStatusParam = req.nextUrl.searchParams.get("amountStatus");
@@ -54,9 +56,10 @@ export async function GET(req: NextRequest) {
   const paymentStatusParam = req.nextUrl.searchParams.get("paymentStatus");
 
   const query: {
-    suppliedAt?: { $gte: Date; $lte: Date };
+    suppliedAt?: { $gte?: Date; $lte?: Date; $lt?: Date };
     driver?: string;
     vehicle?: string;
+    customer?: string;
     amount?: { $exists?: boolean; $ne?: null };
     logType?: "water" | "cash";
     paymentStatus?: "upi" | "not_paid" | { $nin: string[] };
@@ -78,6 +81,20 @@ export async function GET(req: NextRequest) {
     query.suppliedAt = { $gte: monthRange.start, $lte: monthRange.end };
   }
 
+  // Rolling recent window (e.g. days=5 → today plus previous 4 days). Page 1
+  // serves the whole window; later pages walk records older than the window.
+  // Explicit date/month filters win over the window.
+  let windowStart: Date | null = null;
+  if (daysParam && !dateParam && !monthParam) {
+    const days = Number.parseInt(daysParam, 10);
+    if (!Number.isInteger(days) || days < 1 || days > 366) {
+      return NextResponse.json({ error: "Invalid days value." }, { status: 400 });
+    }
+    windowStart = new Date();
+    windowStart.setHours(0, 0, 0, 0);
+    windowStart.setDate(windowStart.getDate() - (days - 1));
+  }
+
   if (driverParam) {
     if (!Types.ObjectId.isValid(driverParam)) {
       return NextResponse.json({ error: "Invalid driver id." }, { status: 400 });
@@ -90,6 +107,13 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Invalid vehicle id." }, { status: 400 });
     }
     query.vehicle = vehicleParam;
+  }
+
+  if (customerParam) {
+    if (!Types.ObjectId.isValid(customerParam)) {
+      return NextResponse.json({ error: "Invalid customer id." }, { status: 400 });
+    }
+    query.customer = customerParam;
   }
 
   if (amountStatusParam === "pending") {
@@ -121,7 +145,21 @@ export async function GET(req: NextRequest) {
     const hasPagination = Boolean(pageParam || limitParam);
     const page = Math.max(1, Number.parseInt(pageParam ?? "1", 10) || 1);
     const limit = Math.max(1, Math.min(200, Number.parseInt(limitParam ?? "10", 10) || 10));
-    const skip = (page - 1) * limit;
+
+    if (windowStart) {
+      if (!hasPagination || page === 1) {
+        const end = new Date();
+        end.setHours(23, 59, 59, 999);
+        query.suppliedAt = { $gte: windowStart, $lte: end };
+      } else {
+        query.suppliedAt = { $lt: windowStart };
+      }
+    }
+
+    // Window mode: page 1 holds the entire recent window, pages 2+ step
+    // through older records limit at a time.
+    const skip = windowStart ? (page <= 1 ? 0 : (page - 2) * limit) : (page - 1) * limit;
+    const fetchLimit = windowStart && page === 1 ? 500 : limit;
 
     const findQuery = SupplyLog.find(query)
       .populate("driver", "name username phone")
@@ -134,8 +172,18 @@ export async function GET(req: NextRequest) {
       return NextResponse.json(logs);
     }
 
-    const [logs, aggResult] = await Promise.all([
-      findQuery.skip(skip).limit(limit).lean(),
+    // In window mode we also need the count on the other side of the window:
+    // on page 1 the older-records count (to size totalPages), on later pages
+    // the window count (to keep serial numbers continuous).
+    const extraCountPromise = windowStart
+      ? SupplyLog.countDocuments({
+          ...query,
+          suppliedAt: page === 1 ? { $lt: windowStart } : { $gte: windowStart },
+        })
+      : Promise.resolve(0);
+
+    const [logs, aggResult, extraCount] = await Promise.all([
+      findQuery.skip(skip).limit(fetchLimit).lean(),
       SupplyLog.aggregate([
         { $match: query },
         {
@@ -150,11 +198,23 @@ export async function GET(req: NextRequest) {
           },
         },
       ]),
+      extraCountPromise,
     ]);
 
     const agg = aggResult[0] as { count: number; totalCans: number; totalCansTakenBack: number; totalAmount: number; driverIds: unknown[]; customerIds: unknown[] } | undefined;
     const total = agg?.count ?? 0;
-    const totalPages = Math.max(1, Math.ceil(total / limit));
+    let totalPages: number;
+    let serialStart: number;
+    if (!windowStart) {
+      totalPages = Math.max(1, Math.ceil(total / limit));
+      serialStart = skip;
+    } else if (page === 1) {
+      totalPages = 1 + Math.ceil(extraCount / limit);
+      serialStart = 0;
+    } else {
+      totalPages = 1 + Math.ceil(total / limit);
+      serialStart = extraCount + skip;
+    }
     const stats = {
       totalCans: agg?.totalCans ?? 0,
       totalCansTakenBack: agg?.totalCansTakenBack ?? 0,
@@ -163,7 +223,7 @@ export async function GET(req: NextRequest) {
       uniqueCustomers: agg?.customerIds?.length ?? 0,
     };
 
-    return NextResponse.json({ logs, total, page, limit, totalPages, stats });
+    return NextResponse.json({ logs, total, page, limit, totalPages, serialStart, stats });
   } catch (err) {
     console.error("[supplies GET]", err);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
@@ -274,13 +334,15 @@ export async function POST(req: NextRequest) {
     }
 
     const created = await SupplyLog.create(payload);
-    const populated = await SupplyLog.findById(created._id)
-      .populate("driver", "name username phone")
-      .populate("vehicle", "name vehicleNumber capacity")
-      .populate("customer", "name phone area")
-      .lean();
 
-    return NextResponse.json(populated, { status: 201 });
+    // Populate in place instead of re-fetching the document
+    await created.populate([
+      { path: "driver", select: "name username phone" },
+      { path: "vehicle", select: "name vehicleNumber capacity" },
+      { path: "customer", select: "name phone area" },
+    ]);
+
+    return NextResponse.json(created.toObject(), { status: 201 });
   } catch (err) {
     console.error("[admin supplies POST]", err);
     return NextResponse.json({ error: "Failed to save delivery log." }, { status: 500 });

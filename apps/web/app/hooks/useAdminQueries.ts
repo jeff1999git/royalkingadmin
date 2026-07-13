@@ -65,7 +65,7 @@ export interface PaginatedCustomers {
   areas: string[];
 }
 
-interface SupplyLog {
+export interface SupplyLog {
   _id: string;
   suppliedAt: string;
   formattedSuppliedAt?: string;
@@ -114,6 +114,7 @@ export interface PaginatedSupplyLogsWithStats {
   page: number;
   limit: number;
   totalPages: number;
+  serialStart?: number;
   stats: {
     totalCans: number;
     totalCansTakenBack: number;
@@ -260,7 +261,7 @@ export function useAdminPendingSupplies() {
   });
 }
 
-const SUPPLIES_PAGE_LIMIT = 100;
+const SUPPLIES_PAGE_LIMIT = 50;
 
 export function useAdminAddedSupplies(
   filters: {
@@ -269,12 +270,15 @@ export function useAdminAddedSupplies(
     driver: string;
     vehicle: string;
     paymentStatus?: string;
+    days?: number;
   },
-  page: number
+  page: number,
+  options?: { enabled?: boolean }
 ) {
   return useQuery<PaginatedSupplyLogsWithStats>({
     queryKey: ["admin", "supplies", "added", filters, page],
     staleTime: 1000 * 30,
+    enabled: options?.enabled ?? true,
     placeholderData: keepPreviousData,
     queryFn: async () => {
       const params = new URLSearchParams();
@@ -286,6 +290,7 @@ export function useAdminAddedSupplies(
       if (filters.driver) params.set("driver", filters.driver);
       if (filters.vehicle) params.set("vehicle", filters.vehicle);
       if (filters.paymentStatus) params.set("paymentStatus", filters.paymentStatus);
+      if (filters.days) params.set("days", String(filters.days));
 
       const res = await fetch(`/api/admin/supplies?${params.toString()}`, {
         cache: "no-store",
@@ -310,12 +315,15 @@ export function useAdminCashCredits(
     driver: string;
     vehicle: string;
     paymentStatus?: string;
+    days?: number;
   },
-  page: number
+  page: number,
+  options?: { enabled?: boolean }
 ) {
   return useQuery<PaginatedSupplyLogsWithStats>({
     queryKey: ["admin", "supplies", "cash-credits", filters, page],
     staleTime: 1000 * 30,
+    enabled: options?.enabled ?? true,
     placeholderData: keepPreviousData,
     queryFn: async () => {
       const params = new URLSearchParams();
@@ -326,12 +334,65 @@ export function useAdminCashCredits(
       if (filters.month) params.set("month", filters.month);
       if (filters.driver) params.set("driver", filters.driver);
       if (filters.vehicle) params.set("vehicle", filters.vehicle);
+      if (filters.days) params.set("days", String(filters.days));
 
       const res = await fetch(`/api/admin/supplies?${params.toString()}`, {
         cache: "no-store",
       });
       if (!res.ok) {
         throw new Error("Failed to fetch cash credits");
+      }
+      const data = (await res.json()) as PaginatedSupplyLogsWithStats;
+      const logs = (data.logs ?? []).map((log) => ({
+        ...log,
+        formattedSuppliedAt: log.formattedSuppliedAt ?? formatDateTime(log.suppliedAt),
+      }));
+      return { ...data, logs };
+    },
+  });
+}
+
+// Single customer details for the history page
+export function useAdminCustomerDetail(customerId: string) {
+  return useQuery<Customer>({
+    queryKey: ["admin", "customers", "detail", customerId],
+    staleTime: 1000 * 60 * 5,
+    gcTime: 1000 * 60 * 30,
+    enabled: Boolean(customerId),
+    queryFn: async () => {
+      const res = await fetch(`/api/admin/customers/${customerId}`, { cache: "no-store" });
+      if (!res.ok) {
+        throw new Error("Failed to fetch customer");
+      }
+      return (await res.json()) as Customer;
+    },
+  });
+}
+
+// Paginated supply history for one customer, with lifetime stats
+export function useAdminCustomerHistory(
+  customerId: string,
+  filters: { month: string; paymentStatus: string },
+  page: number
+) {
+  return useQuery<PaginatedSupplyLogsWithStats>({
+    queryKey: ["admin", "supplies", "customer-history", customerId, filters, page],
+    staleTime: 1000 * 30,
+    enabled: Boolean(customerId),
+    placeholderData: keepPreviousData,
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      params.set("customer", customerId);
+      params.set("page", String(page));
+      params.set("limit", String(SUPPLIES_PAGE_LIMIT));
+      if (filters.month) params.set("month", filters.month);
+      if (filters.paymentStatus) params.set("paymentStatus", filters.paymentStatus);
+
+      const res = await fetch(`/api/admin/supplies?${params.toString()}`, {
+        cache: "no-store",
+      });
+      if (!res.ok) {
+        throw new Error("Failed to fetch customer history");
       }
       const data = (await res.json()) as PaginatedSupplyLogsWithStats;
       const logs = (data.logs ?? []).map((log) => ({

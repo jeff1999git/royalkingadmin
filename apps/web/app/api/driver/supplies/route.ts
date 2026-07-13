@@ -44,18 +44,42 @@ async function parseDriverSupplyRequest(req: NextRequest): Promise<DriverSupplyR
   return (await req.json()) as DriverSupplyRequestBody;
 }
 
-export async function GET() {
+const RECENT_DAYS = 5;
+
+export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session || session.user.role !== "driver") {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  // Default: only the last RECENT_DAYS days. A specific ?date=YYYY-MM-DD fetches that day on demand.
+  const dateParam = req.nextUrl.searchParams.get("date");
+  let start: Date;
+  let end: Date;
+  if (dateParam) {
+    const target = new Date(dateParam);
+    if (Number.isNaN(target.getTime())) {
+      return NextResponse.json({ error: "Invalid date format." }, { status: 400 });
+    }
+    start = new Date(target);
+    end = new Date(target);
+  } else {
+    end = new Date();
+    start = new Date();
+    start.setDate(start.getDate() - (RECENT_DAYS - 1));
+  }
+  start.setHours(0, 0, 0, 0);
+  end.setHours(23, 59, 59, 999);
+
   await connectToDatabase();
-  const logs = await SupplyLog.find({ driver: session.user.id })
+  const logs = await SupplyLog.find({
+    driver: session.user.id,
+    suppliedAt: { $gte: start, $lte: end },
+  })
     .populate("vehicle", "name vehicleNumber capacity")
     .populate("customer", "name phone area")
     .sort({ suppliedAt: -1 })
-    .limit(50)
+    .limit(200)
     .lean();
 
   return NextResponse.json(logs);
@@ -187,12 +211,13 @@ export async function POST(req: NextRequest) {
 
     const created = await SupplyLog.create(payload);
 
-    const populated = await SupplyLog.findById(created._id)
-      .populate("vehicle", "name vehicleNumber capacity")
-      .populate("customer", "name phone area")
-      .lean();
+    // Populate in place instead of re-fetching the document
+    await created.populate([
+      { path: "vehicle", select: "name vehicleNumber capacity" },
+      { path: "customer", select: "name phone area" },
+    ]);
 
-    return NextResponse.json(populated, { status: 201 });
+    return NextResponse.json(created.toObject(), { status: 201 });
   } catch (error) {
     if (uploadedBillImage?.publicId) {
       await deleteImageFromCloudinary(uploadedBillImage.publicId).catch(() => undefined);

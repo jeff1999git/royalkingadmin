@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, FormEvent, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAdminPaginatedCustomers, type Customer } from "../../hooks/useAdminQueries";
 
@@ -41,6 +42,7 @@ export default function CustomersPage() {
   // Reset to page 1 when area filter changes
   useEffect(() => { setPage(1); }, [filterArea]);
 
+  const router = useRouter();
   const queryClient = useQueryClient();
 
   const { data, isLoading } = useAdminPaginatedCustomers({
@@ -95,7 +97,6 @@ export default function CustomersPage() {
   const [editSaving, setEditSaving] = useState(false);
 
   // ── Other UI state ───────────────────────────────────────────────────────────
-  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [confirmDeleteCustomer, setConfirmDeleteCustomer] = useState<Customer | null>(null);
   const [deletingCustomer, setDeletingCustomer] = useState(false);
   const [pageError, setPageError] = useState("");
@@ -161,7 +162,6 @@ export default function CustomersPage() {
       registeredDate: isoToDateInput(customer.registeredDate ?? customer.createdAt),
     });
     setEditError("");
-    setSelectedCustomer(null);
   }
 
   async function saveEdit() {
@@ -210,7 +210,6 @@ export default function CustomersPage() {
       const res = await fetch(`/api/admin/customers/${customer._id}`, { method: "DELETE" });
       setDeletingCustomer(false);
       if (!res.ok) { setPageError("Failed to delete customer."); return; }
-      setSelectedCustomer(null);
       invalidateCustomers();
     } catch {
       setDeletingCustomer(false);
@@ -302,15 +301,13 @@ export default function CustomersPage() {
                   </thead>
                   <tbody>
                     {active.map((customer) => (
-                      <tr key={customer._id}>
+                      <tr
+                        key={customer._id}
+                        style={{ cursor: "pointer" }}
+                        onClick={() => router.push(`/admin/customers/${customer._id}`)}
+                      >
                         <td>
-                          <button
-                            type="button"
-                            style={{ background: "none", border: "none", padding: 0, cursor: "pointer", fontWeight: 600, textAlign: "left" }}
-                            onClick={() => setSelectedCustomer(customer)}
-                          >
-                            {customer.name}
-                          </button>
+                          <span style={{ fontWeight: 600 }}>{customer.name}</span>
                           {customer.address && (
                             <div className="text-sm text-muted">{customer.address}</div>
                           )}
@@ -332,8 +329,8 @@ export default function CustomersPage() {
                         <td style={{ fontWeight: 700 }}>{customer.subscriptionCans}</td>
                         <td>
                           <div style={{ display: "flex", gap: "0.4rem" }}>
-                            <button type="button" className="btn btn-sm btn-secondary" onClick={() => openEdit(customer)}>Edit</button>
-                            <button type="button" className="btn btn-sm btn-danger" onClick={() => setConfirmDeleteCustomer(customer)}>Delete</button>
+                            <button type="button" className="btn btn-sm btn-secondary" onClick={(e) => { e.stopPropagation(); openEdit(customer); }}>Edit</button>
+                            <button type="button" className="btn btn-sm btn-danger" onClick={(e) => { e.stopPropagation(); setConfirmDeleteCustomer(customer); }}>Delete</button>
                           </div>
                         </td>
                       </tr>
@@ -363,15 +360,13 @@ export default function CustomersPage() {
                   </thead>
                   <tbody>
                     {inactive.map((customer) => (
-                      <tr key={customer._id} style={{ opacity: 0.6 }}>
+                      <tr
+                        key={customer._id}
+                        style={{ opacity: 0.6, cursor: "pointer" }}
+                        onClick={() => router.push(`/admin/customers/${customer._id}`)}
+                      >
                         <td>
-                          <button
-                            type="button"
-                            style={{ background: "none", border: "none", padding: 0, cursor: "pointer", fontWeight: 600, textAlign: "left" }}
-                            onClick={() => setSelectedCustomer(customer)}
-                          >
-                            {customer.name}
-                          </button>
+                          <span style={{ fontWeight: 600 }}>{customer.name}</span>
                         </td>
                         <td>{customer.phone}</td>
                         <td>{locationTypeLabel(customer.locationType) ?? "-"}</td>
@@ -379,8 +374,8 @@ export default function CustomersPage() {
                         <td>{customer.subscriptionCans}</td>
                         <td>
                           <div style={{ display: "flex", gap: "0.4rem" }}>
-                            <button type="button" className="btn btn-sm btn-secondary" onClick={() => openEdit(customer)}>Edit</button>
-                            <button type="button" className="btn btn-sm btn-danger" onClick={() => setConfirmDeleteCustomer(customer)}>Delete</button>
+                            <button type="button" className="btn btn-sm btn-secondary" onClick={(e) => { e.stopPropagation(); openEdit(customer); }}>Edit</button>
+                            <button type="button" className="btn btn-sm btn-danger" onClick={(e) => { e.stopPropagation(); setConfirmDeleteCustomer(customer); }}>Delete</button>
                           </div>
                         </td>
                       </tr>
@@ -485,48 +480,6 @@ export default function CustomersPage() {
                 {submitting ? "Saving..." : "Add Customer"}
               </button>
             </form>
-          </div>
-        </div>
-      )}
-
-      {/* View Details Modal */}
-      {selectedCustomer && !editingCustomer && (
-        <div
-          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem", zIndex: 250 }}
-          onClick={() => setSelectedCustomer(null)}
-        >
-          <div className="card" style={{ width: "100%", maxWidth: "480px" }} onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between" style={{ marginBottom: "1rem" }}>
-              <h3>Customer Details</h3>
-              <button type="button" className="btn btn-sm btn-secondary" onClick={() => setSelectedCustomer(null)}>Close</button>
-            </div>
-            <div className="flex-col gap-2">
-              <div><div className="text-sm text-muted">Name</div><div style={{ fontWeight: 600 }}>{selectedCustomer.name}</div></div>
-              <div><div className="text-sm text-muted">Phone</div><div style={{ fontWeight: 600 }}>{selectedCustomer.phone}</div></div>
-              {selectedCustomer.email && <div><div className="text-sm text-muted">Email</div><div style={{ fontWeight: 500 }}>{selectedCustomer.email}</div></div>}
-              {selectedCustomer.locationType && <div><div className="text-sm text-muted">Type</div><div style={{ fontWeight: 600 }}>{locationTypeLabel(selectedCustomer.locationType)}</div></div>}
-              {selectedCustomer.address && <div><div className="text-sm text-muted">Location</div><div style={{ fontWeight: 500 }}>{selectedCustomer.address}</div></div>}
-              {selectedCustomer.area && <div><div className="text-sm text-muted">Area</div><div style={{ fontWeight: 600 }}>{selectedCustomer.area}</div></div>}
-              <div><div className="text-sm text-muted">Subscription</div><div style={{ fontWeight: 600 }}>{selectedCustomer.subscriptionCans} can{selectedCustomer.subscriptionCans !== 1 ? "s" : ""}/day</div></div>
-              {selectedCustomer.cashPerCan !== undefined && <div><div className="text-sm text-muted">Cash Per Can</div><div style={{ fontWeight: 600 }}>₹{selectedCustomer.cashPerCan}</div></div>}
-              {selectedCustomer.securityDeposit !== undefined && <div><div className="text-sm text-muted">Security Deposit</div><div style={{ fontWeight: 600 }}>₹{selectedCustomer.securityDeposit}</div></div>}
-              <div>
-                <div className="text-sm text-muted">Status</div>
-                <div style={{ fontWeight: 600, color: selectedCustomer.isActive ? "var(--accent-primary)" : "var(--text-muted)" }}>
-                  {selectedCustomer.isActive ? "Active" : "Inactive"}
-                </div>
-              </div>
-              <div>
-                <div className="text-sm text-muted">Added Date</div>
-                <div style={{ fontWeight: 600 }}>
-                  {new Date(isoToDateInput(selectedCustomer.registeredDate ?? selectedCustomer.createdAt)).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
-                </div>
-              </div>
-            </div>
-            <div className="flex items-center justify-between" style={{ marginTop: "1.25rem", gap: "0.75rem", flexWrap: "wrap" }}>
-              <button type="button" className="btn btn-danger" disabled={deletingCustomer} onClick={() => setConfirmDeleteCustomer(selectedCustomer)}>Delete</button>
-              <button type="button" className="btn btn-primary" onClick={() => openEdit(selectedCustomer)}>Edit</button>
-            </div>
           </div>
         </div>
       )}
