@@ -456,3 +456,8 @@ tbody td {
     padding-bottom: 0;
   }
 }
+/* Skip layout/paint for offscreen log day-groups; keeps long lists smooth */
+.log-group {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 340px;
+}

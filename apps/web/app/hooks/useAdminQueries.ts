@@ -114,6 +114,7 @@ export interface PaginatedSupplyLogsWithStats {
   page: number;
   limit: number;
   totalPages: number;
+  serialStart?: number;
   stats: {
     totalCans: number;
     totalCansTakenBack: number;
@@ -260,7 +261,7 @@ export function useAdminPendingSupplies() {
   });
 }
 
-const SUPPLIES_PAGE_LIMIT = 100;
+const SUPPLIES_PAGE_LIMIT = 50;
 
 export function useAdminAddedSupplies(
   filters: {
@@ -269,6 +270,7 @@ export function useAdminAddedSupplies(
     driver: string;
     vehicle: string;
     paymentStatus?: string;
+    days?: number;
   },
   page: number
 ) {
@@ -286,6 +288,7 @@ export function useAdminAddedSupplies(
       if (filters.driver) params.set("driver", filters.driver);
       if (filters.vehicle) params.set("vehicle", filters.vehicle);
       if (filters.paymentStatus) params.set("paymentStatus", filters.paymentStatus);
+      if (filters.days) params.set("days", String(filters.days));
 
       const res = await fetch(`/api/admin/supplies?${params.toString()}`, {
         cache: "no-store",
@@ -310,6 +313,7 @@ export function useAdminCashCredits(
     driver: string;
     vehicle: string;
     paymentStatus?: string;
+    days?: number;
   },
   page: number
 ) {
@@ -326,6 +330,7 @@ export function useAdminCashCredits(
       if (filters.month) params.set("month", filters.month);
       if (filters.driver) params.set("driver", filters.driver);
       if (filters.vehicle) params.set("vehicle", filters.vehicle);
+      if (filters.days) params.set("days", String(filters.days));
 
       const res = await fetch(`/api/admin/supplies?${params.toString()}`, {
         cache: "no-store",

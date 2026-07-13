@@ -120,6 +120,8 @@ function maskText(value: string, max = 12) {
   return value.length > max ? `${value.slice(0, max)}...` : value;
 }
 
+const RECENT_DAYS = 5;
+
 export default function SuppliesPage() {
   const maxDate = todayInputValue();
   const maxMonth = currentMonthValue();
@@ -128,7 +130,7 @@ export default function SuppliesPage() {
   const [cashPage, setCashPage] = useState(1);
   const [filters, setFilters] = useState<Filters>({
     date: "",
-    month: maxMonth,
+    month: "",
     driver: "",
     vehicle: "",
     paymentStatus: "",
@@ -163,16 +165,24 @@ export default function SuppliesPage() {
 
   const { data: driverOptions } = useAdminDrivers();
   const { data: customerOptions } = useAdminCustomers();
+
+  // With no filters, page 1 is the last RECENT_DAYS days and Next/Prev walk
+  // older records. Any filter switches to normal unlimited pagination.
+  const hasAnyFilter = Boolean(
+    filters.date || filters.month || filters.driver || filters.vehicle || filters.paymentStatus,
+  );
+  const queryFilters = hasAnyFilter ? filters : { ...filters, days: RECENT_DAYS };
+
   const {
     data: queriedLogs,
     isLoading: logsLoading,
     isError: logsError,
-  } = useAdminAddedSupplies(filters, waterPage);
+  } = useAdminAddedSupplies(queryFilters, waterPage);
   const {
     data: queriedCashLogs,
     isLoading: cashLogsLoading,
     isError: cashLogsError,
-  } = useAdminCashCredits(filters, cashPage);
+  } = useAdminCashCredits(queryFilters, cashPage);
   const queryClient = useAdminQueryClient();
 
   async function downloadImageToDevice(imageUrl?: string | null) {
@@ -217,7 +227,8 @@ export default function SuppliesPage() {
   const currentPage = supplyTab === "water" ? waterPage : cashPage;
 
   const groupedLogs = useMemo(() => {
-    const serialBase = ((activeData?.page ?? 1) - 1) * (activeData?.limit ?? 100);
+    const serialBase =
+      activeData?.serialStart ?? ((activeData?.page ?? 1) - 1) * (activeData?.limit ?? 50);
     const serialById = new Map(
       effectiveLogs.map((log, index) => [log._id, serialBase + index + 1] as const),
     );
@@ -243,7 +254,7 @@ export default function SuppliesPage() {
         };
       })
       .sort((a, b) => b.dateSortValue - a.dateSortValue);
-  }, [effectiveLogs, activeData?.page, activeData?.limit]);
+  }, [effectiveLogs, activeData?.serialStart, activeData?.page, activeData?.limit]);
 
   const summary = useMemo(() => {
     const s = activeData?.stats;
@@ -527,7 +538,7 @@ export default function SuppliesPage() {
   }
 
   function clearFilters() {
-    setFilters({ date: "", month: maxMonth, driver: "", vehicle: "", paymentStatus: "" });
+    setFilters({ date: "", month: "", driver: "", vehicle: "", paymentStatus: "" });
   }
 
   function openAddForm() {
@@ -637,8 +648,8 @@ export default function SuppliesPage() {
 
       const listQueryKey =
         editingLog.logType === "cash"
-          ? ["admin", "supplies", "cash-credits", filters, cashPage]
-          : ["admin", "supplies", "added", filters, waterPage];
+          ? ["admin", "supplies", "cash-credits", queryFilters, cashPage]
+          : ["admin", "supplies", "added", queryFilters, waterPage];
 
       queryClient.setQueryData<PaginatedSupplyLogsWithStats>(
         listQueryKey,
@@ -851,6 +862,11 @@ export default function SuppliesPage() {
         <span style={{ fontSize: "1.05rem", fontWeight: 800, color: "var(--text-primary)" }}>
           Total Amount: {summary.totalAmount.toLocaleString("en-IN")}
         </span>
+        {!hasAnyFilter && (
+          <span style={{ marginLeft: "auto" }}>
+            {currentPage === 1 ? `Last ${RECENT_DAYS} days` : "Older records"}
+          </span>
+        )}
       </div>
 
       {(error || fetchError) && <div className="alert alert-error">{error || fetchError}</div>}
@@ -861,14 +877,16 @@ export default function SuppliesPage() {
         </p>
       ) : effectiveLogs.length === 0 ? (
         <div className="card empty-state">
-          {supplyTab === "water"
-            ? "No water supplies for selected filters."
-            : "No cash credits for selected filters."}
+          {hasAnyFilter
+            ? supplyTab === "water"
+              ? "No water supplies for selected filters."
+              : "No cash credits for selected filters."
+            : `No ${supplyTab === "water" ? "water supplies" : "cash credits"} in the last ${RECENT_DAYS} days.${totalPages > 1 ? " Use Next below to view older records." : ""}`}
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: "0.9rem" }}>
           {groupedLogs.map((group) => (
-            <div key={group.key}>
+            <div key={group.key} className="log-group">
               <div className="flex items-center justify-between" style={{ marginBottom: "0.55rem" }}>
                 <h3 style={{ fontSize: "0.95rem", color: "var(--text-secondary)" }}>{group.label}</h3>
               </div>
@@ -1005,35 +1023,38 @@ export default function SuppliesPage() {
               </div>
             </div>
           ))}
-          <div className="flex items-center justify-between" style={{ marginTop: "0.75rem" }}>
-            <button
-              type="button"
-              className="btn btn-secondary btn-sm"
-              disabled={currentPage <= 1}
-              onClick={() =>
-                supplyTab === "water"
-                  ? setWaterPage((page) => Math.max(1, page - 1))
-                  : setCashPage((page) => Math.max(1, page - 1))
-              }
-            >
-              Prev
-            </button>
-            <div style={{ fontSize: "0.85rem", color: "var(--text-secondary)" }}>
-              Page {currentPage} of {totalPages}
-            </div>
-            <button
-              type="button"
-              className="btn btn-secondary btn-sm"
-              disabled={currentPage >= totalPages}
-              onClick={() =>
-                supplyTab === "water"
-                  ? setWaterPage((page) => Math.min(totalPages, page + 1))
-                  : setCashPage((page) => Math.min(totalPages, page + 1))
-              }
-            >
-              Next
-            </button>
+        </div>
+      )}
+
+      {!loading && (totalPages > 1 || currentPage > 1) && (
+        <div className="flex items-center justify-between" style={{ marginTop: "0.75rem" }}>
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            disabled={currentPage <= 1}
+            onClick={() =>
+              supplyTab === "water"
+                ? setWaterPage((page) => Math.max(1, page - 1))
+                : setCashPage((page) => Math.max(1, page - 1))
+            }
+          >
+            Prev
+          </button>
+          <div style={{ fontSize: "0.85rem", color: "var(--text-secondary)" }}>
+            Page {currentPage} of {totalPages}
           </div>
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            disabled={currentPage >= totalPages}
+            onClick={() =>
+              supplyTab === "water"
+                ? setWaterPage((page) => Math.min(totalPages, page + 1))
+                : setCashPage((page) => Math.min(totalPages, page + 1))
+            }
+          >
+            Next
+          </button>
         </div>
       )}
 

@@ -188,6 +188,43 @@ async function compressImageFile(file: File) {
 }
 
 const DAY_GROUPS_PER_PAGE = 3;
+const RECENT_DAYS = 5;
+
+function normalizeLogs(data: DeliveryLog[] | undefined): DeliveryLog[] {
+  return (data ?? []).map((log) => ({
+    ...log,
+    logType: log.logType === "cash" ? "cash" : "water",
+    formattedSuppliedAt: log.formattedSuppliedAt ?? formatDateTime(log.suppliedAt),
+  }));
+}
+
+function buildGroupedLogs(source: DeliveryLog[]): GroupedLogs[] {
+  const serialById = new Map(
+    [...source]
+      .sort((a, b) => new Date(b.suppliedAt).getTime() - new Date(a.suppliedAt).getTime())
+      .map((log, index) => [log._id, index + 1] as const),
+  );
+
+  const map = new Map<string, DeliveryLog[]>();
+  for (const log of source) {
+    const key = new Date(log.suppliedAt).toDateString();
+    const existing = map.get(key) ?? [];
+    existing.push(log);
+    map.set(key, existing);
+  }
+
+  return Array.from(map.entries())
+    .map(([key, entries]) => ({
+      key,
+      label: getRelativeDayLabel(entries[0]?.suppliedAt ?? new Date().toISOString()),
+      dateInputValue: toDateInputValue(entries[0]?.suppliedAt ?? new Date()),
+      dateSortValue: new Date(entries[0]?.suppliedAt ?? 0).getTime(),
+      entries: entries
+        .sort((a, b) => new Date(b.suppliedAt).getTime() - new Date(a.suppliedAt).getTime())
+        .map((entry) => ({ ...entry, serialNo: serialById.get(entry._id) ?? 0 })),
+    }))
+    .sort((a, b) => b.dateSortValue - a.dateSortValue);
+}
 
 export default function DriverDashboard() {
   const [activeTab, setActiveTab] = useState<"delivery" | "cash" | "register">("delivery");
@@ -278,6 +315,31 @@ export default function DriverDashboard() {
     },
   });
 
+  // Older days are fetched on demand when a date filter is picked
+  const { data: deliveryDateData, isLoading: deliveryDateLoading } = useQuery<DeliveryLog[]>({
+    queryKey: ["driver", "supplies", "byDate", deliveryDateFilter],
+    enabled: Boolean(deliveryDateFilter),
+    staleTime: 1000 * 60 * 5,
+    queryFn: async () => {
+      const res = await fetch(`/api/driver/supplies?date=${encodeURIComponent(deliveryDateFilter)}`, { cache: "no-store" });
+      if (!res.ok) throw new Error("Failed to load logs");
+      const data = (await res.json()) as unknown;
+      return Array.isArray(data) ? (data as DeliveryLog[]) : [];
+    },
+  });
+
+  const { data: cashDateData, isLoading: cashDateLoading } = useQuery<DeliveryLog[]>({
+    queryKey: ["driver", "supplies", "byDate", cashDateFilter],
+    enabled: Boolean(cashDateFilter),
+    staleTime: 1000 * 60 * 5,
+    queryFn: async () => {
+      const res = await fetch(`/api/driver/supplies?date=${encodeURIComponent(cashDateFilter)}`, { cache: "no-store" });
+      if (!res.ok) throw new Error("Failed to load logs");
+      const data = (await res.json()) as unknown;
+      return Array.isArray(data) ? (data as DeliveryLog[]) : [];
+    },
+  });
+
   const vehicles = vehiclesData?.vehicles ?? [];
   const assignedVehicleId =
     vehiclesData?.assignedVehicleId &&
@@ -303,15 +365,7 @@ export default function DriverDashboard() {
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
-  const logs = useMemo<DeliveryLog[]>(
-    () =>
-      (logsData ?? []).map((log) => ({
-        ...log,
-        logType: log.logType === "cash" ? "cash" : "water",
-        formattedSuppliedAt: log.formattedSuppliedAt ?? formatDateTime(log.suppliedAt),
-      })),
-    [logsData],
-  );
+  const logs = useMemo<DeliveryLog[]>(() => normalizeLogs(logsData), [logsData]);
 
   const deliveryLogs = useMemo(
     () => logs.filter((log) => (log.logType ?? "water") === "water"),
@@ -321,34 +375,6 @@ export default function DriverDashboard() {
     () => logs.filter((log) => log.logType === "cash"),
     [logs],
   );
-
-  function buildGroupedLogs(source: DeliveryLog[]): GroupedLogs[] {
-    const serialById = new Map(
-      [...source]
-        .sort((a, b) => new Date(b.suppliedAt).getTime() - new Date(a.suppliedAt).getTime())
-        .map((log, index) => [log._id, index + 1] as const),
-    );
-
-    const map = new Map<string, DeliveryLog[]>();
-    for (const log of source) {
-      const key = new Date(log.suppliedAt).toDateString();
-      const existing = map.get(key) ?? [];
-      existing.push(log);
-      map.set(key, existing);
-    }
-
-    return Array.from(map.entries())
-      .map(([key, entries]) => ({
-        key,
-        label: getRelativeDayLabel(entries[0]?.suppliedAt ?? new Date().toISOString()),
-        dateInputValue: toDateInputValue(entries[0]?.suppliedAt ?? new Date()),
-        dateSortValue: new Date(entries[0]?.suppliedAt ?? 0).getTime(),
-        entries: entries
-          .sort((a, b) => new Date(b.suppliedAt).getTime() - new Date(a.suppliedAt).getTime())
-          .map((entry) => ({ ...entry, serialNo: serialById.get(entry._id) ?? 0 })),
-      }))
-      .sort((a, b) => b.dateSortValue - a.dateSortValue);
-  }
 
   const groupedDeliveryLogs = useMemo(() => buildGroupedLogs(deliveryLogs), [deliveryLogs]);
   const groupedCashLogs = useMemo(() => buildGroupedLogs(cashLogs), [cashLogs]);
@@ -385,17 +411,19 @@ export default function DriverDashboard() {
 
   const visibleDeliveryGroups = useMemo(() => {
     if (deliveryDateFilter) {
-      return groupedDeliveryLogs.filter((g) => g.dateInputValue === deliveryDateFilter).slice(0, 1);
+      const dayLogs = normalizeLogs(deliveryDateData).filter((log) => (log.logType ?? "water") === "water");
+      return buildGroupedLogs(dayLogs).slice(0, 1);
     }
     return groupedDeliveryLogs.slice(0, DAY_GROUPS_PER_PAGE);
-  }, [groupedDeliveryLogs, deliveryDateFilter]);
+  }, [groupedDeliveryLogs, deliveryDateFilter, deliveryDateData]);
 
   const visibleCashGroups = useMemo(() => {
     if (cashDateFilter) {
-      return groupedCashLogs.filter((g) => g.dateInputValue === cashDateFilter).slice(0, 1);
+      const dayLogs = normalizeLogs(cashDateData).filter((log) => log.logType === "cash");
+      return buildGroupedLogs(dayLogs).slice(0, 1);
     }
     return groupedCashLogs.slice(0, DAY_GROUPS_PER_PAGE);
-  }, [cashDateFilter, groupedCashLogs]);
+  }, [cashDateFilter, groupedCashLogs, cashDateData]);
 
   const prefersCameraCapture = useMemo(() => {
     if (typeof window === "undefined" || typeof navigator === "undefined") return false;
@@ -856,16 +884,16 @@ export default function DriverDashboard() {
                 tabIndex={-1}
               />
             </div>
-            {isLoading ? (
+            {(deliveryDateFilter ? deliveryDateLoading : isLoading) ? (
               <p style={{ color: "var(--text-muted)" }}>Loading...</p>
-            ) : deliveryLogs.length === 0 ? (
-              <div className="card empty-state">No delivery logs yet.</div>
             ) : deliveryDateFilter && visibleDeliveryGroups.length === 0 ? (
               <div className="card empty-state">No deliveries found for selected date.</div>
+            ) : !deliveryDateFilter && deliveryLogs.length === 0 ? (
+              <div className="card empty-state">No deliveries in the last {RECENT_DAYS} days. Use the calendar to view older days.</div>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
                 {visibleDeliveryGroups.map((group) => (
-                  <div key={group.key}>
+                  <div key={group.key} className="log-group">
                     <h3 style={{ marginBottom: "0.6rem", fontSize: "0.95rem", color: "var(--text-secondary)" }}>
                       {group.label}
                     </h3>
@@ -1093,16 +1121,16 @@ export default function DriverDashboard() {
                 tabIndex={-1}
               />
             </div>
-            {logsLoading ? (
+            {(cashDateFilter ? cashDateLoading : logsLoading) ? (
               <p style={{ color: "var(--text-muted)" }}>Loading...</p>
-            ) : cashLogs.length === 0 ? (
-              <div className="card empty-state">No cash credit logs yet.</div>
             ) : cashDateFilter && visibleCashGroups.length === 0 ? (
               <div className="card empty-state">No cash logs found for selected date.</div>
+            ) : !cashDateFilter && cashLogs.length === 0 ? (
+              <div className="card empty-state">No cash credits in the last {RECENT_DAYS} days. Use the calendar to view older days.</div>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
                 {visibleCashGroups.map((group) => (
-                  <div key={group.key}>
+                  <div key={group.key} className="log-group">
                     <h3 style={{ marginBottom: "0.6rem", fontSize: "0.95rem", color: "var(--text-secondary)" }}>
                       {group.label}
                     </h3>
