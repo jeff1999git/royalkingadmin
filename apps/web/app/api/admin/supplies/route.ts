@@ -334,13 +334,15 @@ export async function POST(req: NextRequest) {
     }
 
     const created = await SupplyLog.create(payload);
-    const populated = await SupplyLog.findById(created._id)
-      .populate("driver", "name username phone")
-      .populate("vehicle", "name vehicleNumber capacity")
-      .populate("customer", "name phone area")
-      .lean();
 
-    return NextResponse.json(populated, { status: 201 });
+    // Populate in place instead of re-fetching the document
+    await created.populate([
+      { path: "driver", select: "name username phone" },
+      { path: "vehicle", select: "name vehicleNumber capacity" },
+      { path: "customer", select: "name phone area" },
+    ]);
+
+    return NextResponse.json(created.toObject(), { status: 201 });
   } catch (err) {
     console.error("[admin supplies POST]", err);
     return NextResponse.json({ error: "Failed to save delivery log." }, { status: 500 });

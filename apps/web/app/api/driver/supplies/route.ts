@@ -211,12 +211,13 @@ export async function POST(req: NextRequest) {
 
     const created = await SupplyLog.create(payload);
 
-    const populated = await SupplyLog.findById(created._id)
-      .populate("vehicle", "name vehicleNumber capacity")
-      .populate("customer", "name phone area")
-      .lean();
+    // Populate in place instead of re-fetching the document
+    await created.populate([
+      { path: "vehicle", select: "name vehicleNumber capacity" },
+      { path: "customer", select: "name phone area" },
+    ]);
 
-    return NextResponse.json(populated, { status: 201 });
+    return NextResponse.json(created.toObject(), { status: 201 });
   } catch (error) {
     if (uploadedBillImage?.publicId) {
       await deleteImageFromCloudinary(uploadedBillImage.publicId).catch(() => undefined);

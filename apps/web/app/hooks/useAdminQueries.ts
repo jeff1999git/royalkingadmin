@@ -272,11 +272,13 @@ export function useAdminAddedSupplies(
     paymentStatus?: string;
     days?: number;
   },
-  page: number
+  page: number,
+  options?: { enabled?: boolean }
 ) {
   return useQuery<PaginatedSupplyLogsWithStats>({
     queryKey: ["admin", "supplies", "added", filters, page],
     staleTime: 1000 * 30,
+    enabled: options?.enabled ?? true,
     placeholderData: keepPreviousData,
     queryFn: async () => {
       const params = new URLSearchParams();
@@ -315,11 +317,13 @@ export function useAdminCashCredits(
     paymentStatus?: string;
     days?: number;
   },
-  page: number
+  page: number,
+  options?: { enabled?: boolean }
 ) {
   return useQuery<PaginatedSupplyLogsWithStats>({
     queryKey: ["admin", "supplies", "cash-credits", filters, page],
     staleTime: 1000 * 30,
+    enabled: options?.enabled ?? true,
     placeholderData: keepPreviousData,
     queryFn: async () => {
       const params = new URLSearchParams();

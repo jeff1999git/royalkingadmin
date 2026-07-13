@@ -174,16 +174,18 @@ export default function SuppliesPage() {
   );
   const queryFilters = hasAnyFilter ? filters : { ...filters, days: RECENT_DAYS };
 
+  // Only the visible tab's query runs; the other tab fetches when opened.
+  // This halves the load on page open and after every add/edit/delete.
   const {
     data: queriedLogs,
     isLoading: logsLoading,
     isError: logsError,
-  } = useAdminAddedSupplies(queryFilters, waterPage);
+  } = useAdminAddedSupplies(queryFilters, waterPage, { enabled: supplyTab === "water" });
   const {
     data: queriedCashLogs,
     isLoading: cashLogsLoading,
     isError: cashLogsError,
-  } = useAdminCashCredits(queryFilters, cashPage);
+  } = useAdminCashCredits(queryFilters, cashPage, { enabled: supplyTab === "cash" });
   const queryClient = useAdminQueryClient();
 
   async function downloadImageToDevice(imageUrl?: string | null) {
@@ -585,7 +587,9 @@ export default function SuppliesPage() {
       setAddSubmitting(false);
       if (!res.ok) { setAddError(data.error ?? "Failed to create delivery."); return; }
       setShowAddForm(false);
-      await queryClient.invalidateQueries({ queryKey: ["admin", "supplies"] });
+      // Fire-and-forget: the visible list refetches in the background while
+      // keepPreviousData keeps the current rows on screen.
+      void queryClient.invalidateQueries({ queryKey: ["admin", "supplies"] });
     } catch {
       setAddSubmitting(false);
       setAddError("Failed to create delivery.");
@@ -680,7 +684,7 @@ export default function SuppliesPage() {
       }
       setSelectedLog(null);
       setEditingLog(null);
-      await queryClient.invalidateQueries({ queryKey: ["admin", "supplies"] });
+      void queryClient.invalidateQueries({ queryKey: ["admin", "supplies"] });
     } catch {
       setDeleteSaving(false);
       setError("Failed to delete supply log. Please try again.");

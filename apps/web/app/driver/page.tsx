@@ -541,7 +541,8 @@ export default function DriverDashboard() {
     setSuccess("Delivery logged successfully.");
     setDeliveryForm({ deliveryKey: "", cansDelivered: "", cansTakenBack: "", vehicleId: assignedVehicleId, notes: "", paymentStatus: "cash" });
     setCustomerSearch("");
-    await queryClient.invalidateQueries({ queryKey: ["driver", "supplies"] });
+    // Fire-and-forget so the form frees up immediately; the list refreshes in the background.
+    void queryClient.invalidateQueries({ queryKey: ["driver", "supplies"] });
   }
 
   async function submitRegister(e: FormEvent) {
@@ -574,7 +575,7 @@ export default function DriverDashboard() {
 
     setRegisterSuccess("Customer registered successfully.");
     setRegisterForm({ name: "", phone: "", email: "", location: "", locationType: "home" as "home" | "office" | "both", cashPerCan: "" });
-    await queryClient.invalidateQueries({ queryKey: ["driver", "customers"] });
+    void queryClient.invalidateQueries({ queryKey: ["driver", "customers"] });
   }
 
   async function submitCash(e: FormEvent) {
@@ -614,7 +615,7 @@ export default function DriverDashboard() {
     setSuccess("Cash credit logged successfully.");
     setCashForm({ amount: "", cashType: "fuel", notes: "" });
     clearCashBillSelection();
-    await queryClient.invalidateQueries({ queryKey: ["driver", "supplies"] });
+    void queryClient.invalidateQueries({ queryKey: ["driver", "supplies"] });
   }
 
   const isLoading = vehiclesLoading || customersLoading || logsLoading;
