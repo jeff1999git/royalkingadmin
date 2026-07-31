@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "../../../../../lib/auth";
+import { istDayStart } from "../../../../../lib/istTime";
 import { connectToDatabase } from "../../../../../lib/mongodb";
 import Vehicle from "../../../../../models/Vehicle";
 import User from "../../../../../models/User";
@@ -17,7 +18,9 @@ export async function GET() {
 
   const driver = await User.findById(session.user.id).select("assignedVehicle").lean();
   if (!driver?.assignedVehicle) {
-    return NextResponse.json({ filledToday: false, odometer: null, history: [] });
+    // No vehicle → no odometer to fill; hasVehicle:false tells the client
+    // not to show the blocking daily prompt (which could never be satisfied).
+    return NextResponse.json({ hasVehicle: false, filledToday: false, odometer: null, history: [] });
   }
 
   const vehicle = await Vehicle.findById(driver.assignedVehicle)
@@ -25,23 +28,18 @@ export async function GET() {
     .lean();
 
   if (!vehicle) {
-    return NextResponse.json({ filledToday: false, odometer: null, history: [] });
+    return NextResponse.json({ hasVehicle: false, filledToday: false, odometer: null, history: [] });
   }
 
   const lastUpdated = vehicle.odometerLastUpdated;
-  let filledToday = false;
-  if (lastUpdated) {
-    const startOfToday = new Date();
-    startOfToday.setUTCHours(0, 0, 0, 0);
-    filledToday = new Date(lastUpdated) >= startOfToday;
-  }
+  const filledToday = Boolean(lastUpdated && new Date(lastUpdated) >= istDayStart());
 
   const history = [...(vehicle.odometerHistory ?? [])]
     .sort((a, b) => new Date(b.recordedAt).getTime() - new Date(a.recordedAt).getTime())
     .slice(0, 5)
     .map((e) => ({ reading: e.reading, recordedAt: e.recordedAt }));
 
-  return NextResponse.json({ filledToday, odometer: vehicle.odometer ?? 0, history });
+  return NextResponse.json({ hasVehicle: true, filledToday, odometer: vehicle.odometer ?? 0, history });
 }
 
 export async function PATCH(req: NextRequest) {
@@ -73,12 +71,8 @@ export async function PATCH(req: NextRequest) {
     .select("odometerLastUpdated")
     .lean();
 
-  if (vehicle?.odometerLastUpdated) {
-    const startOfToday = new Date();
-    startOfToday.setUTCHours(0, 0, 0, 0);
-    if (new Date(vehicle.odometerLastUpdated) >= startOfToday) {
-      return NextResponse.json({ error: "Odometer already submitted for today." }, { status: 400 });
-    }
+  if (vehicle?.odometerLastUpdated && new Date(vehicle.odometerLastUpdated) >= istDayStart()) {
+    return NextResponse.json({ error: "Odometer already submitted for today." }, { status: 400 });
   }
 
   const now = new Date();

@@ -511,19 +511,26 @@ export default function DriverDashboard() {
       return;
     }
 
-    const res = await fetch("/api/driver/supplies", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        logType: "water",
-        customerId: selectedOpt.customerId,
-        cansDelivered: deliveryForm.cansDelivered !== "" ? Number(deliveryForm.cansDelivered) : undefined,
-        cansTakenBack: deliveryForm.cansTakenBack !== "" ? Number(deliveryForm.cansTakenBack) : undefined,
-        vehicleId: deliveryForm.vehicleId || undefined,
-        notes: deliveryForm.notes,
-        paymentStatus: deliveryForm.paymentStatus,
-      }),
-    });
+    let res: Response;
+    try {
+      res = await fetch("/api/driver/supplies", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          logType: "water",
+          customerId: selectedOpt.customerId,
+          cansDelivered: deliveryForm.cansDelivered !== "" ? Number(deliveryForm.cansDelivered) : undefined,
+          cansTakenBack: deliveryForm.cansTakenBack !== "" ? Number(deliveryForm.cansTakenBack) : undefined,
+          vehicleId: deliveryForm.vehicleId || undefined,
+          notes: deliveryForm.notes,
+          paymentStatus: deliveryForm.paymentStatus,
+        }),
+      });
+    } catch {
+      setSubmitting(false);
+      setError("Network error. Please check your connection and try again.");
+      return;
+    }
 
     let data: { error?: string } = {};
     try { data = (await res.json()) as { error?: string }; } catch { /* ignore */ }
@@ -547,18 +554,25 @@ export default function DriverDashboard() {
     setRegisterSuccess("");
     setRegistering(true);
 
-    const res = await fetch("/api/driver/customers", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: registerForm.name.trim(),
-        phone: registerForm.phone.trim(),
-        email: registerForm.email.trim() || undefined,
-        address: registerForm.location.trim(),
-        locationType: registerForm.locationType,
-        cashPerCan: registerForm.cashPerCan !== "" ? Number(registerForm.cashPerCan) : undefined,
-      }),
-    });
+    let res: Response;
+    try {
+      res = await fetch("/api/driver/customers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: registerForm.name.trim(),
+          phone: registerForm.phone.trim(),
+          email: registerForm.email.trim() || undefined,
+          address: registerForm.location.trim(),
+          locationType: registerForm.locationType,
+          cashPerCan: registerForm.cashPerCan !== "" ? Number(registerForm.cashPerCan) : undefined,
+        }),
+      });
+    } catch {
+      setRegistering(false);
+      setRegisterError("Network error. Please check your connection and try again.");
+      return;
+    }
 
     let data: { error?: string } = {};
     try { data = (await res.json()) as { error?: string }; } catch { /* ignore */ }
@@ -597,7 +611,14 @@ export default function DriverDashboard() {
     formData.set("notes", cashForm.notes);
     if (cashBillFile) formData.set("billImage", cashBillFile);
 
-    const res = await fetch("/api/driver/supplies", { method: "POST", body: formData });
+    let res: Response;
+    try {
+      res = await fetch("/api/driver/supplies", { method: "POST", body: formData });
+    } catch {
+      setSubmitting(false);
+      setError("Network error. Please check your connection and try again.");
+      return;
+    }
 
     let data: { error?: string } = {};
     try { data = (await res.json()) as { error?: string }; } catch { /* ignore */ }

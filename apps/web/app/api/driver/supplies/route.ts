@@ -3,6 +3,7 @@ import { Types } from "mongoose";
 import { getServerSession } from "next-auth";
 import { authOptions } from "../../../../lib/auth";
 import { deleteImageFromCloudinary, uploadImageToCloudinary } from "../../../../lib/cloudinary";
+import { istDateRange, istDayEnd, istDayStart } from "../../../../lib/istTime";
 import { connectToDatabase } from "../../../../lib/mongodb";
 import SupplyLog from "../../../../models/SupplyLog";
 import Customer from "../../../../models/Customer";
@@ -37,6 +38,7 @@ async function parseDriverSupplyRequest(req: NextRequest): Promise<DriverSupplyR
       notes: typeof formData.get("notes") === "string" ? formData.get("notes") as string : undefined,
       amount: typeof formData.get("amount") === "string" ? formData.get("amount") as string : undefined,
       cashType: typeof formData.get("cashType") === "string" ? (formData.get("cashType") as "debit" | "fuel") : undefined,
+      paymentStatus: typeof formData.get("paymentStatus") === "string" ? (formData.get("paymentStatus") as "cash" | "upi" | "not_paid") : undefined,
       billImageFile: billImage instanceof File && billImage.size > 0 ? billImage : null,
     };
   }
@@ -57,19 +59,16 @@ export async function GET(req: NextRequest) {
   let start: Date;
   let end: Date;
   if (dateParam) {
-    const target = new Date(dateParam);
-    if (Number.isNaN(target.getTime())) {
+    const range = istDateRange(dateParam);
+    if (!range) {
       return NextResponse.json({ error: "Invalid date format." }, { status: 400 });
     }
-    start = new Date(target);
-    end = new Date(target);
+    start = range.start;
+    end = range.end;
   } else {
-    end = new Date();
-    start = new Date();
-    start.setDate(start.getDate() - (RECENT_DAYS - 1));
+    end = istDayEnd();
+    start = new Date(istDayStart().getTime() - (RECENT_DAYS - 1) * 24 * 60 * 60 * 1000);
   }
-  start.setHours(0, 0, 0, 0);
-  end.setHours(23, 59, 59, 999);
 
   await connectToDatabase();
   const logs = await SupplyLog.find({

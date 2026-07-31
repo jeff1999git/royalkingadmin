@@ -2,25 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { Types } from "mongoose";
 import { getServerSession } from "next-auth";
 import { authOptions } from "../../../../lib/auth";
+import { istDateRange, istDayEnd, istDayStart, istMonthRange } from "../../../../lib/istTime";
 import { connectToDatabase } from "../../../../lib/mongodb";
 import SupplyLog from "../../../../models/SupplyLog";
 import Customer from "../../../../models/Customer";
 
-function parseDateRange(dateText: string | null) {
-  const target = dateText ? new Date(dateText) : new Date();
-  if (Number.isNaN(target.getTime())) {
-    return null;
-  }
-
-  const start = new Date(target);
-  start.setHours(0, 0, 0, 0);
-  const end = new Date(target);
-  end.setHours(23, 59, 59, 999);
-  return { start, end };
-}
-
-function parseMonthRange(monthText: string | null) {
-  if (!monthText) return null;
+function parseMonthRange(monthText: string) {
   const parts = monthText.split("-");
   if (parts.length !== 2) return null;
 
@@ -30,11 +17,7 @@ function parseMonthRange(monthText: string | null) {
     return null;
   }
 
-  const start = new Date(year, month - 1, 1);
-  start.setHours(0, 0, 0, 0);
-  const end = new Date(year, month, 0);
-  end.setHours(23, 59, 59, 999);
-  return { start, end };
+  return istMonthRange(year, month);
 }
 
 export async function GET(req: NextRequest) {
@@ -55,18 +38,20 @@ export async function GET(req: NextRequest) {
   const logTypeParam = req.nextUrl.searchParams.get("logType");
   const paymentStatusParam = req.nextUrl.searchParams.get("paymentStatus");
 
+  // Values are stored pre-cast (ObjectId, Date) so the same query object works
+  // for both find() and aggregate() — aggregation pipelines skip schema casting.
   const query: {
     suppliedAt?: { $gte?: Date; $lte?: Date; $lt?: Date };
-    driver?: string;
-    vehicle?: string;
-    customer?: string;
+    driver?: Types.ObjectId;
+    vehicle?: Types.ObjectId;
+    customer?: Types.ObjectId;
     amount?: { $exists?: boolean; $ne?: null };
     logType?: "water" | "cash";
-    paymentStatus?: "upi" | "not_paid" | { $nin: string[] };
+    paymentStatus?: "upi" | "not_paid" | { $nin: ("upi" | "not_paid")[] };
   } = {};
 
   if (dateParam) {
-    const dateRange = parseDateRange(dateParam);
+    const dateRange = istDateRange(dateParam);
     if (!dateRange) {
       return NextResponse.json({ error: "Invalid date format." }, { status: 400 });
     }
@@ -90,30 +75,28 @@ export async function GET(req: NextRequest) {
     if (!Number.isInteger(days) || days < 1 || days > 366) {
       return NextResponse.json({ error: "Invalid days value." }, { status: 400 });
     }
-    windowStart = new Date();
-    windowStart.setHours(0, 0, 0, 0);
-    windowStart.setDate(windowStart.getDate() - (days - 1));
+    windowStart = new Date(istDayStart().getTime() - (days - 1) * 24 * 60 * 60 * 1000);
   }
 
   if (driverParam) {
     if (!Types.ObjectId.isValid(driverParam)) {
       return NextResponse.json({ error: "Invalid driver id." }, { status: 400 });
     }
-    query.driver = driverParam;
+    query.driver = new Types.ObjectId(driverParam);
   }
 
   if (vehicleParam) {
     if (!Types.ObjectId.isValid(vehicleParam)) {
       return NextResponse.json({ error: "Invalid vehicle id." }, { status: 400 });
     }
-    query.vehicle = vehicleParam;
+    query.vehicle = new Types.ObjectId(vehicleParam);
   }
 
   if (customerParam) {
     if (!Types.ObjectId.isValid(customerParam)) {
       return NextResponse.json({ error: "Invalid customer id." }, { status: 400 });
     }
-    query.customer = customerParam;
+    query.customer = new Types.ObjectId(customerParam);
   }
 
   if (amountStatusParam === "pending") {
@@ -148,9 +131,7 @@ export async function GET(req: NextRequest) {
 
     if (windowStart) {
       if (!hasPagination || page === 1) {
-        const end = new Date();
-        end.setHours(23, 59, 59, 999);
-        query.suppliedAt = { $gte: windowStart, $lte: end };
+        query.suppliedAt = { $gte: windowStart, $lte: istDayEnd() };
       } else {
         query.suppliedAt = { $lt: windowStart };
       }

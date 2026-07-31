@@ -41,28 +41,33 @@ function LoginForm() {
         setError("");
         setLoading(true);
 
-        const res = await signIn("credentials", {
-            username,
-            password,
-            redirect: false,
-        });
+        try {
+            const res = await signIn("credentials", {
+                username,
+                password,
+                redirect: false,
+            });
 
-        setLoading(false);
+            setLoading(false);
 
-        if (!res?.ok) {
-            setError("Invalid username or password.");
-            return;
-        }
+            if (!res?.ok) {
+                setError("Invalid username or password.");
+                return;
+            }
 
-        const sessionRes = await fetch("/api/auth/session");
-        const sess = await sessionRes.json() as { user?: { role: string } };
+            const sessionRes = await fetch("/api/auth/session");
+            const sess = await sessionRes.json() as { user?: { role: string } };
 
-        if (sess?.user?.role === "admin") {
-            router.push("/admin/amounts");
-        } else if (sess?.user?.role === "driver") {
-            router.push("/driver");
-        } else {
-            setError("Unexpected error. Please try again.");
+            if (sess?.user?.role === "admin") {
+                router.push("/admin/amounts");
+            } else if (sess?.user?.role === "driver") {
+                router.push("/driver");
+            } else {
+                setError("Unexpected error. Please try again.");
+            }
+        } catch {
+            setLoading(false);
+            setError("Network error. Please check your connection and try again.");
         }
     }
 
@@ -93,7 +98,7 @@ function LoginForm() {
 
                         <div className="form-group">
                             <label className="form-label" htmlFor="password">Password</label>
-                            <input id="password" type="password" className="form-input" placeholder="Enter your password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="new-password" required />
+                            <input id="password" type="password" className="form-input" placeholder="Enter your password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="current-password" required />
                         </div>
 
                         {error && <div className="alert alert-error">{error}</div>}

@@ -42,8 +42,11 @@ export default function DriverLayout({ children }: { children: ReactNode }) {
             try {
                 const res = await fetch("/api/driver/vehicles/odometer", { cache: "no-store" });
                 if (res.ok) {
-                    const data = (await res.json()) as { filledToday: boolean };
-                    if (!data.filledToday) {
+                    const data = (await res.json()) as { filledToday: boolean; hasVehicle?: boolean };
+                    // Only gate drivers who actually have a vehicle — without one
+                    // the reading can never be submitted, so blocking would lock
+                    // the driver out of the whole app.
+                    if (!data.filledToday && data.hasVehicle !== false) {
                         setOdometerRequired(true);
                     }
                 }
@@ -120,25 +123,30 @@ export default function DriverLayout({ children }: { children: ReactNode }) {
         setOdometerError("");
         setOdometerSubmitting(true);
 
-        const res = await fetch("/api/driver/vehicles/odometer", {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ odometer: Number(odometerValue) }),
-        });
+        try {
+            const res = await fetch("/api/driver/vehicles/odometer", {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ odometer: Number(odometerValue) }),
+            });
 
-        let data: { error?: string } = {};
-        try { data = (await res.json()) as { error?: string }; } catch { /* ignore */ }
-        setOdometerSubmitting(false);
+            let data: { error?: string } = {};
+            try { data = (await res.json()) as { error?: string }; } catch { /* ignore */ }
+            setOdometerSubmitting(false);
 
-        if (!res.ok) {
-            setOdometerError(data.error ?? "Failed to update odometer.");
-            return;
+            if (!res.ok) {
+                setOdometerError(data.error ?? "Failed to update odometer.");
+                return;
+            }
+
+            // Dismiss whichever modal is open
+            setOdometerRequired(false);
+            setOdometerOpen(false);
+            setOdometerValue("");
+        } catch {
+            setOdometerSubmitting(false);
+            setOdometerError("Network error. Please check your connection and try again.");
         }
-
-        // Dismiss whichever modal is open
-        setOdometerRequired(false);
-        setOdometerOpen(false);
-        setOdometerValue("");
     }
 
     const showOdometerModal = odometerRequired || odometerOpen;

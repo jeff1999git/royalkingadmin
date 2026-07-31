@@ -6,7 +6,7 @@ import { deleteImageFromCloudinary } from "../../../../../lib/cloudinary";
 import { connectToDatabase } from "../../../../../lib/mongodb";
 import SupplyLog from "../../../../../models/SupplyLog";
 import Vehicle from "../../../../../models/Vehicle";
-import Customer from "../../../../../models/Customer";
+import "../../../../../models/Customer";
 
 export async function PATCH(
   req: NextRequest,
@@ -105,12 +105,12 @@ export async function PATCH(
   if (cansDelivered !== undefined) {
     setPayload.cansDelivered = cansDelivered;
     // Recalculate amount based on updated cansDelivered × customer's cashPerCan
-    const existingLog = await SupplyLog.findById(id).lean();
-    if (existingLog?.logType === "water" && existingLog.customer) {
-      const customer = await Customer.findById(existingLog.customer).lean();
-      if (customer?.cashPerCan !== undefined) {
-        setPayload.amount = cansDelivered * customer.cashPerCan;
-      }
+    const existingLog = await SupplyLog.findById(id)
+      .select("logType customer")
+      .populate<{ customer?: { cashPerCan?: number } }>("customer", "cashPerCan")
+      .lean();
+    if (existingLog?.logType === "water" && existingLog.customer?.cashPerCan !== undefined) {
+      setPayload.amount = cansDelivered * existingLog.customer.cashPerCan;
     }
   }
   if (cansTakenBack !== undefined) setPayload.cansTakenBack = cansTakenBack;
@@ -121,16 +121,7 @@ export async function PATCH(
     return NextResponse.json({ error: "Nothing to update." }, { status: 400 });
   }
 
-  const updateResult = await SupplyLog.collection.updateOne(
-    { _id: new Types.ObjectId(id) },
-    { $set: setPayload }
-  );
-
-  if (updateResult.matchedCount === 0) {
-    return NextResponse.json({ error: "Supply not found." }, { status: 404 });
-  }
-
-  const updated = await SupplyLog.findById(id)
+  const updated = await SupplyLog.findByIdAndUpdate(id, { $set: setPayload }, { new: true })
     .populate("driver", "name username phone")
     .populate("vehicle", "name vehicleNumber capacity")
     .populate("customer", "name phone area")

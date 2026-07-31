@@ -37,18 +37,26 @@ export default function AssignmentsPage() {
     const [formError, setFormError] = useState("");
     const [formSuccess, setFormSuccess] = useState("");
     const [submitting, setSubmitting] = useState(false);
+    const [loadError, setLoadError] = useState("");
     const [statusFilter, setStatusFilter] = useState<"all" | "pending" | "completed">("all");
 
     async function fetchAll() {
-        const [aRes, dRes, spRes] = await Promise.all([
-            fetch("/api/admin/assignments"),
-            fetch("/api/admin/drivers"),
-            fetch("/api/admin/supply-points"),
-        ]);
-        setAssignments(await aRes.json() as Assignment[]);
-        setDrivers(await dRes.json() as Driver[]);
-        setSupplyPoints(await spRes.json() as SupplyPoint[]);
-        setLoading(false);
+        setLoadError("");
+        try {
+            const [aRes, dRes, spRes] = await Promise.all([
+                fetch("/api/admin/assignments"),
+                fetch("/api/admin/drivers"),
+                fetch("/api/admin/supply-points"),
+            ]);
+            const [aData, dData, spData] = await Promise.all([aRes.json(), dRes.json(), spRes.json()]);
+            setAssignments(Array.isArray(aData) ? aData as Assignment[] : []);
+            setDrivers(Array.isArray(dData) ? dData as Driver[] : []);
+            setSupplyPoints(Array.isArray(spData) ? spData as SupplyPoint[] : []);
+        } catch {
+            setLoadError("Failed to load assignments. Please refresh and try again.");
+        } finally {
+            setLoading(false);
+        }
     }
 
     useEffect(() => { void fetchAll(); }, []);
@@ -59,22 +67,27 @@ export default function AssignmentsPage() {
         setFormSuccess("");
         setSubmitting(true);
 
-        const res = await fetch("/api/admin/assignments", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(formData),
-        });
-        const data = await res.json() as { error?: string };
-        setSubmitting(false);
+        try {
+            const res = await fetch("/api/admin/assignments", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(formData),
+            });
+            const data = await res.json() as { error?: string };
+            setSubmitting(false);
 
-        if (!res.ok) {
-            setFormError(data.error ?? "Failed to create assignment");
-            return;
+            if (!res.ok) {
+                setFormError(data.error ?? "Failed to create assignment");
+                return;
+            }
+            setFormSuccess("Assignment created!");
+            setFormData({ driver: "", supplyPoint: "", tankerType: "", scheduledDate: "", frequency: "once" });
+            void fetchAll();
+            setTimeout(() => { setShowForm(false); setFormSuccess(""); }, 1500);
+        } catch {
+            setSubmitting(false);
+            setFormError("Network error. Please try again.");
         }
-        setFormSuccess("Assignment created!");
-        setFormData({ driver: "", supplyPoint: "", tankerType: "", scheduledDate: "", frequency: "once" });
-        void fetchAll();
-        setTimeout(() => { setShowForm(false); setFormSuccess(""); }, 1500);
     }
 
     const filtered = statusFilter === "all"
@@ -166,6 +179,8 @@ export default function AssignmentsPage() {
                     </button>
                 ))}
             </div>
+
+            {loadError && <div className="alert alert-error" style={{ marginBottom: "1rem" }}>{loadError}</div>}
 
             {loading ? (
                 <p style={{ color: "var(--text-muted)" }}>Loading assignments…</p>

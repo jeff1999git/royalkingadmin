@@ -122,6 +122,17 @@ function maskText(value: string, max = 12) {
   return value.length > max ? `${value.slice(0, max)}...` : value;
 }
 
+// Driver-entered text (names, notes, remarks) goes into the print window's
+// raw HTML — escape it so it can never run as markup there.
+function escapeHtml(value: string | number) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
 const RECENT_DAYS = 5;
 
 export default function SuppliesPage() {
@@ -338,22 +349,22 @@ export default function SuppliesPage() {
         (r) => isCashTab
           ? `<tr>
           <td>${r.no}</td>
-          <td>${r.dateTime}</td>
-          <td>${r.driver}</td>
-          <td>${r.cashType}</td>
-          <td>${r.amount}</td>
-          <td>${r.note}</td>
-          <td>${r.remark}</td>
+          <td>${escapeHtml(r.dateTime)}</td>
+          <td>${escapeHtml(r.driver)}</td>
+          <td>${escapeHtml(r.cashType ?? "-")}</td>
+          <td>${escapeHtml(r.amount)}</td>
+          <td>${escapeHtml(r.note ?? "-")}</td>
+          <td>${escapeHtml(r.remark)}</td>
         </tr>`
           : `<tr>
           <td>${r.no}</td>
-          <td>${r.dateTime}</td>
-          <td>${r.driver}</td>
-          <td>${r.customer}</td>
-          <td>${r.cans}</td>
-          <td>${r.cansTakenBack}</td>
-          <td>${r.amount}</td>
-          <td>${r.remark}</td>
+          <td>${escapeHtml(r.dateTime)}</td>
+          <td>${escapeHtml(r.driver)}</td>
+          <td>${escapeHtml(r.customer ?? "-")}</td>
+          <td>${escapeHtml(r.cans ?? "-")}</td>
+          <td>${escapeHtml(r.cansTakenBack ?? "-")}</td>
+          <td>${escapeHtml(r.amount)}</td>
+          <td>${escapeHtml(r.remark)}</td>
         </tr>`
       )
       .join("");
