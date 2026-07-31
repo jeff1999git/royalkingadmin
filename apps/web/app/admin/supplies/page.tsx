@@ -230,11 +230,6 @@ export default function SuppliesPage() {
   const currentPage = supplyTab === "water" ? waterPage : cashPage;
 
   const groupedLogs = useMemo(() => {
-    const serialBase =
-      activeData?.serialStart ?? ((activeData?.page ?? 1) - 1) * (activeData?.limit ?? 50);
-    const serialById = new Map(
-      effectiveLogs.map((log, index) => [log._id, serialBase + index + 1] as const),
-    );
     const groups = new Map<string, SupplyLog[]>();
     for (const log of effectiveLogs) {
       const key = new Date(log.suppliedAt).toDateString();
@@ -243,6 +238,8 @@ export default function SuppliesPage() {
       groups.set(key, current);
     }
 
+    // Serial numbers restart at 1 for each day, following the displayed
+    // latest-first order (top row of every day group is 1).
     return Array.from(groups.entries())
       .map(([key, entries]) => {
         const firstDate = entries[0]?.suppliedAt ?? new Date();
@@ -250,14 +247,14 @@ export default function SuppliesPage() {
           key,
           label: getRelativeDayLabel(firstDate),
           dateSortValue: new Date(firstDate).getTime(),
-          entries: entries.map((entry) => ({
+          entries: entries.map((entry, index) => ({
             ...entry,
-            serialNo: serialById.get(entry._id) ?? 0,
+            serialNo: index + 1,
           })),
         };
       })
       .sort((a, b) => b.dateSortValue - a.dateSortValue);
-  }, [effectiveLogs, activeData?.serialStart, activeData?.page, activeData?.limit]);
+  }, [effectiveLogs]);
 
   const summary = useMemo(() => {
     const s = activeData?.stats;
