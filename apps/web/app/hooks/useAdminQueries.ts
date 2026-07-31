@@ -269,6 +269,7 @@ export function useAdminAddedSupplies(
     month: string;
     driver: string;
     vehicle: string;
+    customer?: string;
     paymentStatus?: string;
     days?: number;
   },
@@ -289,6 +290,7 @@ export function useAdminAddedSupplies(
       if (filters.month) params.set("month", filters.month);
       if (filters.driver) params.set("driver", filters.driver);
       if (filters.vehicle) params.set("vehicle", filters.vehicle);
+      if (filters.customer) params.set("customer", filters.customer);
       if (filters.paymentStatus) params.set("paymentStatus", filters.paymentStatus);
       if (filters.days) params.set("days", String(filters.days));
 

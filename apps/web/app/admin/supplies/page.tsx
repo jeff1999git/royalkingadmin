@@ -73,6 +73,7 @@ type Filters = {
   month: string;
   driver: string;
   vehicle: string;
+  customer: string;
   paymentStatus: "" | "cash" | "upi" | "not_paid";
 };
 
@@ -134,6 +135,7 @@ export default function SuppliesPage() {
     month: "",
     driver: "",
     vehicle: "",
+    customer: "",
     paymentStatus: "",
   });
   const [error, setError] = useState("");
@@ -170,7 +172,7 @@ export default function SuppliesPage() {
   // With no filters, page 1 is the last RECENT_DAYS days and Next/Prev walk
   // older records. Any filter switches to normal unlimited pagination.
   const hasAnyFilter = Boolean(
-    filters.date || filters.month || filters.driver || filters.vehicle || filters.paymentStatus,
+    filters.date || filters.month || filters.driver || filters.vehicle || filters.customer || filters.paymentStatus,
   );
   const queryFilters = hasAnyFilter ? filters : { ...filters, days: RECENT_DAYS };
 
@@ -538,7 +540,7 @@ export default function SuppliesPage() {
   }
 
   function clearFilters() {
-    setFilters({ date: "", month: "", driver: "", vehicle: "", paymentStatus: "" });
+    setFilters({ date: "", month: "", driver: "", vehicle: "", customer: "", paymentStatus: "" });
   }
 
   function openAddForm() {
@@ -814,6 +816,27 @@ export default function SuppliesPage() {
               ))}
             </select>
           </div>
+          {supplyTab === "water" && (
+            <div className="form-group">
+              <label className="form-label" htmlFor="filterCustomer">Customer</label>
+              <select
+                id="filterCustomer"
+                className="form-select"
+                value={filters.customer}
+                onChange={(e) => setFilters((f) => ({ ...f, customer: e.target.value }))}
+              >
+                <option value="">All Customers</option>
+                {(customerOptions ?? [])
+                  .slice()
+                  .sort((a, b) => a.name.localeCompare(b.name))
+                  .map((c) => (
+                    <option key={c._id} value={c._id}>
+                      {c.name}{c.area ? ` - ${c.area}` : ""}{c.isActive ? "" : " (inactive)"}
+                    </option>
+                  ))}
+              </select>
+            </div>
+          )}
           {supplyTab === "water" && (
             <div className="form-group">
               <label className="form-label" htmlFor="filterPaymentStatus">Payment Method</label>
