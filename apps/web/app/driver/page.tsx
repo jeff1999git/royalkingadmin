@@ -199,12 +199,6 @@ function normalizeLogs(data: DeliveryLog[] | undefined): DeliveryLog[] {
 }
 
 function buildGroupedLogs(source: DeliveryLog[]): GroupedLogs[] {
-  const serialById = new Map(
-    [...source]
-      .sort((a, b) => new Date(b.suppliedAt).getTime() - new Date(a.suppliedAt).getTime())
-      .map((log, index) => [log._id, index + 1] as const),
-  );
-
   const map = new Map<string, DeliveryLog[]>();
   for (const log of source) {
     const key = new Date(log.suppliedAt).toDateString();
@@ -213,6 +207,8 @@ function buildGroupedLogs(source: DeliveryLog[]): GroupedLogs[] {
     map.set(key, existing);
   }
 
+  // Serial numbers restart at 1 for each day, following the displayed
+  // latest-first order (top entry of every day group is 1).
   return Array.from(map.entries())
     .map(([key, entries]) => ({
       key,
@@ -221,7 +217,7 @@ function buildGroupedLogs(source: DeliveryLog[]): GroupedLogs[] {
       dateSortValue: new Date(entries[0]?.suppliedAt ?? 0).getTime(),
       entries: entries
         .sort((a, b) => new Date(b.suppliedAt).getTime() - new Date(a.suppliedAt).getTime())
-        .map((entry) => ({ ...entry, serialNo: serialById.get(entry._id) ?? 0 })),
+        .map((entry, index) => ({ ...entry, serialNo: index + 1 })),
     }))
     .sort((a, b) => b.dateSortValue - a.dateSortValue);
 }

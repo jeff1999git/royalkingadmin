@@ -73,6 +73,7 @@ type Filters = {
   month: string;
   driver: string;
   vehicle: string;
+  customer: string;
   paymentStatus: "" | "cash" | "upi" | "not_paid";
 };
 
@@ -134,6 +135,7 @@ export default function SuppliesPage() {
     month: "",
     driver: "",
     vehicle: "",
+    customer: "",
     paymentStatus: "",
   });
   const [error, setError] = useState("");
@@ -170,7 +172,7 @@ export default function SuppliesPage() {
   // With no filters, page 1 is the last RECENT_DAYS days and Next/Prev walk
   // older records. Any filter switches to normal unlimited pagination.
   const hasAnyFilter = Boolean(
-    filters.date || filters.month || filters.driver || filters.vehicle || filters.paymentStatus,
+    filters.date || filters.month || filters.driver || filters.vehicle || filters.customer || filters.paymentStatus,
   );
   const queryFilters = hasAnyFilter ? filters : { ...filters, days: RECENT_DAYS };
 
@@ -230,11 +232,6 @@ export default function SuppliesPage() {
   const currentPage = supplyTab === "water" ? waterPage : cashPage;
 
   const groupedLogs = useMemo(() => {
-    const serialBase =
-      activeData?.serialStart ?? ((activeData?.page ?? 1) - 1) * (activeData?.limit ?? 50);
-    const serialById = new Map(
-      effectiveLogs.map((log, index) => [log._id, serialBase + index + 1] as const),
-    );
     const groups = new Map<string, SupplyLog[]>();
     for (const log of effectiveLogs) {
       const key = new Date(log.suppliedAt).toDateString();
@@ -243,6 +240,8 @@ export default function SuppliesPage() {
       groups.set(key, current);
     }
 
+    // Serial numbers restart at 1 for each day, following the displayed
+    // latest-first order (top row of every day group is 1).
     return Array.from(groups.entries())
       .map(([key, entries]) => {
         const firstDate = entries[0]?.suppliedAt ?? new Date();
@@ -250,14 +249,14 @@ export default function SuppliesPage() {
           key,
           label: getRelativeDayLabel(firstDate),
           dateSortValue: new Date(firstDate).getTime(),
-          entries: entries.map((entry) => ({
+          entries: entries.map((entry, index) => ({
             ...entry,
-            serialNo: serialById.get(entry._id) ?? 0,
+            serialNo: index + 1,
           })),
         };
       })
       .sort((a, b) => b.dateSortValue - a.dateSortValue);
-  }, [effectiveLogs, activeData?.serialStart, activeData?.page, activeData?.limit]);
+  }, [effectiveLogs]);
 
   const summary = useMemo(() => {
     const s = activeData?.stats;
@@ -541,7 +540,7 @@ export default function SuppliesPage() {
   }
 
   function clearFilters() {
-    setFilters({ date: "", month: "", driver: "", vehicle: "", paymentStatus: "" });
+    setFilters({ date: "", month: "", driver: "", vehicle: "", customer: "", paymentStatus: "" });
   }
 
   function openAddForm() {
@@ -817,6 +816,27 @@ export default function SuppliesPage() {
               ))}
             </select>
           </div>
+          {supplyTab === "water" && (
+            <div className="form-group">
+              <label className="form-label" htmlFor="filterCustomer">Customer</label>
+              <select
+                id="filterCustomer"
+                className="form-select"
+                value={filters.customer}
+                onChange={(e) => setFilters((f) => ({ ...f, customer: e.target.value }))}
+              >
+                <option value="">All Customers</option>
+                {(customerOptions ?? [])
+                  .slice()
+                  .sort((a, b) => a.name.localeCompare(b.name))
+                  .map((c) => (
+                    <option key={c._id} value={c._id}>
+                      {c.name}{c.area ? ` - ${c.area}` : ""}{c.isActive ? "" : " (inactive)"}
+                    </option>
+                  ))}
+              </select>
+            </div>
+          )}
           {supplyTab === "water" && (
             <div className="form-group">
               <label className="form-label" htmlFor="filterPaymentStatus">Payment Method</label>
