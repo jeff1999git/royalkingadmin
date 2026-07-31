@@ -241,26 +241,6 @@ export function useAdminPaginatedSupplies(page: number, limit: number) {
   });
 }
 
-export function useAdminPendingSupplies() {
-  return useQuery<SupplyLog[]>({
-    queryKey: ["admin", "supplies", "pending"],
-    staleTime: 1000 * 60,
-    queryFn: async () => {
-      const res = await fetch("/api/admin/supplies?amountStatus=pending&logType=water&page=1&limit=100", { cache: "no-store" });
-      if (!res.ok) {
-        throw new Error("Failed to fetch pending supplies");
-      }
-      const data = (await res.json()) as unknown;
-      const paged = data as PaginatedSupplyLogs;
-      const baseLogs = Array.isArray(paged.logs) ? paged.logs : [];
-      return baseLogs.map((log) => ({
-        ...log,
-        formattedSuppliedAt: log.formattedSuppliedAt ?? formatDateTime(log.suppliedAt),
-      }));
-    },
-  });
-}
-
 const SUPPLIES_PAGE_LIMIT = 50;
 
 export function useAdminAddedSupplies(

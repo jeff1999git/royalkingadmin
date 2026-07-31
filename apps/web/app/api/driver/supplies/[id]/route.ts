@@ -67,17 +67,16 @@ export async function PATCH(
   try {
     uploadedBillImage = await uploadImageToCloudinary(billImageFile);
 
-    await SupplyLog.collection.updateOne(
-      { _id: new Types.ObjectId(id) },
+    const updated = await SupplyLog.findByIdAndUpdate(
+      id,
       {
         $set: {
           billImageUrl: uploadedBillImage.secureUrl,
           billImagePublicId: uploadedBillImage.publicId,
         },
       },
-    );
-
-    const updated = await SupplyLog.findById(id)
+      { new: true },
+    )
       .populate("vehicle", "name vehicleNumber capacity")
       .lean();
 

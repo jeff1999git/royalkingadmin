@@ -2,13 +2,11 @@
 const nextConfig = {
     serverExternalPackages: ["mongoose"],
     poweredByHeader: false,
+    // The app renders plain <img> tags (Cloudinary applies transformations
+    // via URL), so the /_next/image optimizer endpoint is pure attack
+    // surface — turn it off.
     images: {
-        remotePatterns: [
-            {
-                protocol: "https",
-                hostname: "res.cloudinary.com",
-            },
-        ],
+        unoptimized: true,
     },
     async headers() {
         return [

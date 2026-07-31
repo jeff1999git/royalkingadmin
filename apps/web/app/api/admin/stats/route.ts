@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "../../../../lib/auth";
+import { istDateRange, istDayEnd, istDayStart } from "../../../../lib/istTime";
 import { connectToDatabase } from "../../../../lib/mongodb";
 import User from "../../../../models/User";
 import Vehicle from "../../../../models/Vehicle";
@@ -14,11 +15,19 @@ export async function GET(req: NextRequest) {
     }
 
     const dateParam = req.nextUrl.searchParams.get("date");
-    const target = dateParam ? new Date(dateParam) : new Date();
-    const start = new Date(target);
-    start.setHours(0, 0, 0, 0);
-    const end = new Date(target);
-    end.setHours(23, 59, 59, 999);
+    let start: Date;
+    let end: Date;
+    if (dateParam) {
+        const range = istDateRange(dateParam);
+        if (!range) {
+            return NextResponse.json({ error: "Invalid date format." }, { status: 400 });
+        }
+        start = range.start;
+        end = range.end;
+    } else {
+        start = istDayStart();
+        end = istDayEnd();
+    }
 
     await connectToDatabase();
 

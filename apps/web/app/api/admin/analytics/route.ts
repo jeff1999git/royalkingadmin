@@ -1,17 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "../../../../lib/auth";
+import { istDateRange, istTodayString } from "../../../../lib/istTime";
 import { connectToDatabase } from "../../../../lib/mongodb";
 import SupplyLog from "../../../../models/SupplyLog";
 import Customer from "../../../../models/Customer";
 import { Types } from "mongoose";
-
-// YYYY-MM-DD (IST date string) → UTC Date at IST midnight of that day
-function istMidnightUTC(dateStr: string): Date {
-  const d = new Date(dateStr + "T00:00:00.000Z");
-  d.setMinutes(d.getMinutes() - 330); // subtract IST offset (5h30m)
-  return d;
-}
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -29,42 +23,33 @@ export async function GET(req: NextRequest) {
   try {
   await connectToDatabase();
 
-  let start: Date;
-  let end: Date;
-  const dateLabels: string[] = [];
+  // Both branches work in IST days: fromDay/toDay are inclusive IST date
+  // strings, and the query range spans exactly those days.
+  let fromDay: string;
+  let toDay: string;
 
   const dateRe = /^\d{4}-\d{2}-\d{2}$/;
   if (fromParam && toParam && dateRe.test(fromParam) && dateRe.test(toParam) && fromParam <= toParam) {
-    start = istMidnightUTC(fromParam);
-    // end = start of next IST day after toParam (exclusive upper bound)
-    const nextDay = new Date(toParam + "T00:00:00.000Z");
-    nextDay.setDate(nextDay.getDate() + 1);
-    end = istMidnightUTC(nextDay.toISOString().slice(0, 10));
-
-    // Enumerate IST date labels from fromParam to toParam inclusive
-    const cur = new Date(fromParam + "T00:00:00.000Z");
-    const last = new Date(toParam + "T00:00:00.000Z");
-    while (cur <= last) {
-      dateLabels.push(cur.toISOString().slice(0, 10));
-      cur.setDate(cur.getDate() + 1);
-    }
+    fromDay = fromParam;
+    toDay = toParam;
   } else {
     const days = Math.min(90, Math.max(7, Number.parseInt(daysParam ?? "30", 10) || 30));
-    const now = new Date();
-    start = new Date(now);
-    start.setDate(start.getDate() - days + 1);
-    start.setHours(0, 0, 0, 0);
-    end = new Date(now);
-    end.setHours(23, 59, 59, 999);
+    toDay = istTodayString();
+    const first = new Date(`${toDay}T00:00:00.000Z`);
+    first.setUTCDate(first.getUTCDate() - days + 1);
+    fromDay = first.toISOString().slice(0, 10);
+  }
 
-    for (let i = 0; i < days; i++) {
-      const d = new Date(start);
-      d.setDate(d.getDate() + i);
-      const year = d.getFullYear();
-      const month = String(d.getMonth() + 1).padStart(2, "0");
-      const day = String(d.getDate()).padStart(2, "0");
-      dateLabels.push(`${year}-${month}-${day}`);
-    }
+  const start = istDateRange(fromDay)!.start;
+  const end = istDateRange(toDay)!.end;
+
+  // Enumerate IST date labels from fromDay to toDay inclusive
+  const dateLabels: string[] = [];
+  const cur = new Date(`${fromDay}T00:00:00.000Z`);
+  const last = new Date(`${toDay}T00:00:00.000Z`);
+  while (cur <= last) {
+    dateLabels.push(cur.toISOString().slice(0, 10));
+    cur.setUTCDate(cur.getUTCDate() + 1);
   }
 
   type MatchType = Record<string, unknown>;

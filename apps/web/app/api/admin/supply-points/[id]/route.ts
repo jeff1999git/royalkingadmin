@@ -15,6 +15,10 @@ export async function PATCH(
     }
 
     const { id } = await params;
+    if (!Types.ObjectId.isValid(id)) {
+        return NextResponse.json({ error: "Invalid supply point id." }, { status: 400 });
+    }
+
     const body = await req.json() as { name: string; address: string; tankerTypes: string[] };
     const { name, address, tankerTypes } = body;
 

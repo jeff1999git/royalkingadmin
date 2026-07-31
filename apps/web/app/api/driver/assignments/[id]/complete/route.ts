@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Types } from "mongoose";
 import { getServerSession } from "next-auth";
 import { authOptions } from "../../../../../../lib/auth";
 import { connectToDatabase } from "../../../../../../lib/mongodb";
@@ -15,6 +16,9 @@ export async function PATCH(
     }
 
     const { id } = await params;
+    if (!Types.ObjectId.isValid(id)) {
+        return NextResponse.json({ error: "Invalid assignment id." }, { status: 400 });
+    }
     const body = await req.json() as { remark?: string };
 
     await connectToDatabase();

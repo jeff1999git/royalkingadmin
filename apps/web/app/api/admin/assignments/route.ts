@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Types } from "mongoose";
 import { getServerSession } from "next-auth";
 import { authOptions } from "../../../../lib/auth";
 import { connectToDatabase } from "../../../../lib/mongodb";
@@ -36,14 +37,25 @@ export async function POST(req: NextRequest) {
     if (!supplyPoint || !driver || !tankerType || !scheduledDate) {
         return NextResponse.json({ error: "All fields are required" }, { status: 400 });
     }
+    if (!Types.ObjectId.isValid(supplyPoint) || !Types.ObjectId.isValid(driver)) {
+        return NextResponse.json({ error: "Invalid supply point or driver." }, { status: 400 });
+    }
+    const parsedDate = new Date(scheduledDate);
+    if (Number.isNaN(parsedDate.getTime())) {
+        return NextResponse.json({ error: "Invalid scheduled date." }, { status: 400 });
+    }
+    if (frequency !== "once" && frequency !== "daily") {
+        return NextResponse.json({ error: "Invalid frequency." }, { status: 400 });
+    }
 
     await connectToDatabase();
-    const assignment = await Assignment.create({ supplyPoint, driver, tankerType, scheduledDate, frequency });
+    const assignment = await Assignment.create({ supplyPoint, driver, tankerType, scheduledDate: parsedDate, frequency });
 
-    const populated = await Assignment.findById(assignment._id)
-        .populate("supplyPoint", "name address tankerTypes")
-        .populate("driver", "name username phone")
-        .lean();
+    // Populate in place instead of re-fetching the document
+    await assignment.populate([
+        { path: "supplyPoint", select: "name address tankerTypes" },
+        { path: "driver", select: "name username phone" },
+    ]);
 
-    return NextResponse.json(populated, { status: 201 });
+    return NextResponse.json(assignment.toObject(), { status: 201 });
 }

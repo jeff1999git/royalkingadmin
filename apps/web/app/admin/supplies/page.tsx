@@ -122,6 +122,17 @@ function maskText(value: string, max = 12) {
   return value.length > max ? `${value.slice(0, max)}...` : value;
 }
 
+// Driver-entered text (names, notes, remarks) goes into the print window's
+// raw HTML — escape it so it can never run as markup there.
+function escapeHtml(value: string | number) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
 const RECENT_DAYS = 5;
 
 export default function SuppliesPage() {
@@ -291,8 +302,16 @@ export default function SuppliesPage() {
     }));
   }
 
-  function exportTotalAmount() {
-    return effectiveLogs.reduce((sum, log) => sum + (log.amount ?? 0), 0);
+  function exportTotals() {
+    return effectiveLogs.reduce(
+      (acc, log) => {
+        acc.amount += log.amount ?? 0;
+        acc.cans += log.cansDelivered ?? 0;
+        acc.takenBack += log.cansTakenBack ?? 0;
+        return acc;
+      },
+      { amount: 0, cans: 0, takenBack: 0 },
+    );
   }
 
   function triggerDownload(filename: string, blob: Blob) {
@@ -308,7 +327,7 @@ export default function SuppliesPage() {
 
   function openReportWindowAndPrint() {
     const rows = exportRows();
-    const totalAmount = exportTotalAmount();
+    const totals = exportTotals();
     const reportWindow = window.open("", "_blank", "width=1200,height=800");
     if (!reportWindow) return null;
     const isCashTab = supplyTab === "cash";
@@ -338,25 +357,38 @@ export default function SuppliesPage() {
         (r) => isCashTab
           ? `<tr>
           <td>${r.no}</td>
-          <td>${r.dateTime}</td>
-          <td>${r.driver}</td>
-          <td>${r.cashType}</td>
-          <td>${r.amount}</td>
-          <td>${r.note}</td>
-          <td>${r.remark}</td>
+          <td>${escapeHtml(r.dateTime)}</td>
+          <td>${escapeHtml(r.driver)}</td>
+          <td>${escapeHtml(r.cashType ?? "-")}</td>
+          <td>${escapeHtml(r.amount)}</td>
+          <td>${escapeHtml(r.note ?? "-")}</td>
+          <td>${escapeHtml(r.remark)}</td>
         </tr>`
           : `<tr>
           <td>${r.no}</td>
-          <td>${r.dateTime}</td>
-          <td>${r.driver}</td>
-          <td>${r.customer}</td>
-          <td>${r.cans}</td>
-          <td>${r.cansTakenBack}</td>
-          <td>${r.amount}</td>
-          <td>${r.remark}</td>
+          <td>${escapeHtml(r.dateTime)}</td>
+          <td>${escapeHtml(r.driver)}</td>
+          <td>${escapeHtml(r.customer ?? "-")}</td>
+          <td>${escapeHtml(r.cans ?? "-")}</td>
+          <td>${escapeHtml(r.cansTakenBack ?? "-")}</td>
+          <td>${escapeHtml(r.amount)}</td>
+          <td>${escapeHtml(r.remark)}</td>
         </tr>`
       )
       .join("");
+    const footerRow = isCashTab
+      ? `<tr>
+          <td colspan="4">Total</td>
+          <td>${totals.amount.toLocaleString("en-IN")}</td>
+          <td colspan="2"></td>
+        </tr>`
+      : `<tr>
+          <td colspan="4">Total</td>
+          <td>${totals.cans}</td>
+          <td>${totals.takenBack}</td>
+          <td>${totals.amount.toLocaleString("en-IN")}</td>
+          <td></td>
+        </tr>`;
     reportWindow.document.write(`
       <html>
         <head>
@@ -368,16 +400,18 @@ export default function SuppliesPage() {
             table { width: 100%; border-collapse: collapse; font-size: 12px; }
             th, td { border: 1px solid #cfd8e3; padding: 6px; text-align: left; vertical-align: top; }
             th { background: #f5f7fb; }
+            tfoot td { font-weight: 700; background: #f5f7fb; }
           </style>
         </head>
         <body>
           <h1>${reportTitle}</h1>
-          <div class="meta">Generated: ${formatDateTime(new Date())} | Total Rows: ${rows.length} | <span style="font-weight:700;">Total Amount: ${totalAmount.toLocaleString("en-IN")}</span></div>
+          <div class="meta">Generated: ${formatDateTime(new Date())} | Total Rows: ${rows.length} | <span style="font-weight:700;">Total Amount: ${totals.amount.toLocaleString("en-IN")}</span></div>
           <table>
             <thead>
               ${headerRow}
             </thead>
             <tbody>${tableRows}</tbody>
+            <tfoot>${footerRow}</tfoot>
           </table>
         </body>
       </html>
@@ -397,7 +431,7 @@ export default function SuppliesPage() {
     }
 
     const rows = exportRows().slice(0, MAX_EXPORT_ROWS);
-    const totalAmount = exportTotalAmount();
+    const totals = exportTotals();
     const isCashTab = supplyTab === "cash";
     const reportTitle = isCashTab ? "Cash Credits" : "Water Supplies";
     const columns: ExportColumn[] = isCashTab
@@ -463,7 +497,8 @@ export default function SuppliesPage() {
       return { row, cellLines, rowHeight };
     });
 
-    const tableHeight = headerHeight + rowLayouts.reduce((sum, r) => sum + r.rowHeight, 0);
+    const footerHeight = headerHeight;
+    const tableHeight = headerHeight + rowLayouts.reduce((sum, r) => sum + r.rowHeight, 0) + footerHeight;
     const height = outerPadding + titleHeight + tableHeight + outerPadding;
 
     const canvas = document.createElement("canvas");
@@ -482,7 +517,7 @@ export default function SuppliesPage() {
     ctx.fillStyle = "#334155";
     ctx.fillText(`Generated: ${formatDateTime(new Date())}`, outerPadding, outerPadding + 48);
     ctx.font = "700 14px Arial";
-    ctx.fillText(`Total Amount: ${totalAmount.toLocaleString("en-IN")}`, outerPadding, outerPadding + 68);
+    ctx.fillText(`Total Amount: ${totals.amount.toLocaleString("en-IN")}`, outerPadding, outerPadding + 68);
 
     const tableX = outerPadding;
     let y = outerPadding + titleHeight;
@@ -493,6 +528,7 @@ export default function SuppliesPage() {
     ctx.lineWidth = 1;
     ctx.strokeRect(tableX, y, tableWidth, headerHeight);
 
+    const columnLineBottom = y + headerHeight + rowLayouts.reduce((sum, r) => sum + r.rowHeight, 0) + footerHeight;
     let x = tableX;
     ctx.font = "700 12px Arial";
     ctx.fillStyle = "#111827";
@@ -500,13 +536,13 @@ export default function SuppliesPage() {
       ctx.fillText(col.title, x + cellPaddingX, y + 22);
       ctx.beginPath();
       ctx.moveTo(x, y);
-      ctx.lineTo(x, y + headerHeight + rowLayouts.reduce((sum, r) => sum + r.rowHeight, 0));
+      ctx.lineTo(x, columnLineBottom);
       ctx.stroke();
       x += col.width;
     }
     ctx.beginPath();
     ctx.moveTo(tableX + tableWidth, y);
-    ctx.lineTo(tableX + tableWidth, y + headerHeight + rowLayouts.reduce((sum, r) => sum + r.rowHeight, 0));
+    ctx.lineTo(tableX + tableWidth, columnLineBottom);
     ctx.stroke();
 
     y += headerHeight;
@@ -527,6 +563,28 @@ export default function SuppliesPage() {
         colX += column.width;
       }
       y += layout.rowHeight;
+    }
+
+    // Bold totals row at the bottom of the table.
+    const footerValues: Partial<Record<keyof ExportRow, string>> = isCashTab
+      ? { no: "Total", amount: totals.amount.toLocaleString("en-IN") }
+      : {
+          no: "Total",
+          cans: String(totals.cans),
+          cansTakenBack: String(totals.takenBack),
+          amount: totals.amount.toLocaleString("en-IN"),
+        };
+    ctx.fillStyle = "#f5f7fb";
+    ctx.fillRect(tableX, y, tableWidth, footerHeight);
+    ctx.strokeStyle = "#cfd8e3";
+    ctx.strokeRect(tableX, y, tableWidth, footerHeight);
+    ctx.font = "700 12px Arial";
+    ctx.fillStyle = "#111827";
+    let footerX = tableX;
+    for (const col of columns) {
+      const value = footerValues[col.key];
+      if (value) ctx.fillText(value, footerX + cellPaddingX, y + 22);
+      footerX += col.width;
     }
 
     canvas.toBlob((pngBlob) => {
