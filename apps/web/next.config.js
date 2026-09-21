@@ -19,6 +19,16 @@ const nextConfig = {
                     { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
                 ],
             },
+            {
+                // PWA service worker (public/sw.js). Never cache it, so a new
+                // version is always picked up; lock it to same-origin scripts.
+                source: "/sw.js",
+                headers: [
+                    { key: "Content-Type", value: "application/javascript; charset=utf-8" },
+                    { key: "Cache-Control", value: "no-cache, no-store, must-revalidate" },
+                    { key: "Content-Security-Policy", value: "default-src 'self'; script-src 'self'" },
+                ],
+            },
         ];
     },
 };

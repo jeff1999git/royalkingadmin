@@ -20,6 +20,30 @@ You can start editing the page by modifying `app/page.tsx`. The page auto-update
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load Inter, a custom Google Font.
 
+## Installable app (PWA)
+
+The app can be installed to a phone or desktop home screen. It then opens full-screen with the Royal King icon, and it shows a branded page instead of a browser error when there is no connection.
+
+| Piece | File |
+|---|---|
+| Web app manifest (name, colours, icons, shortcuts), served at `/manifest.webmanifest` | `app/manifest.ts` |
+| Theme colour, `viewport-fit=cover`, iOS home-screen settings | `app/layout.tsx` |
+| Service worker | `public/sw.js` |
+| Offline page | `public/offline.html` |
+| Worker registration and the "Update available" banner | `app/components/PwaRegister.tsx` |
+| Install button (Chrome/Edge) and iPhone hint, on `/` and `/login` | `app/components/InstallPrompt.tsx` |
+| Icons, favicon and Apple touch icon | `public/icons/`, `app/apple-icon.png`, `app/favicon.ico` |
+
+**What the service worker caches.** It caches only content-hashed build files (`/_next/static/*`), the icons, the manifest and the offline page. It never touches `/api/*`, any non-GET request, other origins such as Cloudinary, or page HTML. Ledger data is therefore always live, saves and fuel-bill uploads go straight to the server, and nothing from one signed-in user can appear for another user on a shared phone. Saving while offline is not supported, and forms still need a connection.
+
+**Development.** The worker is registered only in production builds. `npm run dev` unregisters any leftover worker, because dev chunk names aren't hashed and a stale worker would serve old code. To test the PWA locally, run `npm run build && npm run start` and open `http://localhost:3000`. Localhost counts as secure, so HTTPS isn't needed there. Installing from a phone needs the HTTPS deployment.
+
+**Changing the service worker, offline page or icons.** Bump `VERSION` at the top of `public/sw.js`. Open apps then show "A new version of the app is ready" and switch over when the user taps Reload. They never reload by themselves, so a half-filled form is not lost.
+
+**Regenerating icons.** Edit the artwork in `scripts/generate-pwa-icons.mjs`, run `npm run icons`, commit the output files, and bump `VERSION` in `public/sw.js`. The script uses `sharp`, which is already installed through Next.js.
+
+**Proxy.** `proxy.ts` must keep `/sw.js`, `/manifest.webmanifest`, `/offline.html` and `/icons/*` out of its matcher. They have to load without a session.
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:
