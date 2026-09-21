@@ -386,6 +386,48 @@ export function useAdminCustomerHistory(
   });
 }
 
+export interface NewCustomer {
+  _id: string;
+  name: string;
+  phone: string;
+  area?: string;
+  address?: string;
+  locationType?: "home" | "office" | "both";
+  subscriptionCans: number;
+  cashPerCan?: number;
+  isActive: boolean;
+  isDeleted?: boolean;
+  registeredDate?: string;
+  createdAt: string;
+  addedBy:
+    | { kind: "admin" }
+    | { kind: "driver"; name: string; username: string }
+    | { kind: "deleted-driver" };
+}
+
+export interface NewCustomersResponse {
+  fromDay: string;
+  toDay: string;
+  total: number;
+  limit: number;
+  customers: NewCustomer[];
+}
+
+// Customers behind the analytics "New Customers" number. `rangeQuery` is the
+// same from/to or days query string the analytics page sends, so both agree.
+export function useAdminNewCustomers(rangeQuery: string, options?: { enabled?: boolean }) {
+  return useQuery<NewCustomersResponse>({
+    queryKey: ["admin", "analytics", "new-customers", rangeQuery],
+    staleTime: 1000 * 60 * 2,
+    enabled: options?.enabled ?? true,
+    queryFn: async () => {
+      const res = await fetch(`/api/admin/analytics/new-customers?${rangeQuery}`, { cache: "no-store" });
+      if (!res.ok) throw new Error("Failed to load new customers");
+      return (await res.json()) as NewCustomersResponse;
+    },
+  });
+}
+
 export function useAdminQueryClient() {
   return useQueryClient();
 }
