@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "../../../../lib/auth";
-import { istDateRange, istTodayString } from "../../../../lib/istTime";
+import { newCustomerMatch, resolveAnalyticsRange } from "../../../../lib/analyticsRange";
 import { connectToDatabase } from "../../../../lib/mongodb";
 import SupplyLog from "../../../../models/SupplyLog";
 import Customer from "../../../../models/Customer";
@@ -14,34 +14,19 @@ export async function GET(req: NextRequest) {
   }
 
   const sp = req.nextUrl.searchParams;
-  const fromParam = sp.get("from");
-  const toParam = sp.get("to");
-  const daysParam = sp.get("days");
   const driverIdParam = sp.get("driverId");
   const vehicleIdParam = sp.get("vehicleId");
 
+  // Inclusive IST days. Shared with /api/admin/analytics/new-customers so the
+  // "New Customers" total and the list behind it use the same window.
+  const range = resolveAnalyticsRange(sp);
+  if (!range) {
+    return NextResponse.json({ error: "Invalid date range." }, { status: 400 });
+  }
+  const { fromDay, toDay, start, end } = range;
+
   try {
   await connectToDatabase();
-
-  // Both branches work in IST days: fromDay/toDay are inclusive IST date
-  // strings, and the query range spans exactly those days.
-  let fromDay: string;
-  let toDay: string;
-
-  const dateRe = /^\d{4}-\d{2}-\d{2}$/;
-  if (fromParam && toParam && dateRe.test(fromParam) && dateRe.test(toParam) && fromParam <= toParam) {
-    fromDay = fromParam;
-    toDay = toParam;
-  } else {
-    const days = Math.min(90, Math.max(7, Number.parseInt(daysParam ?? "30", 10) || 30));
-    toDay = istTodayString();
-    const first = new Date(`${toDay}T00:00:00.000Z`);
-    first.setUTCDate(first.getUTCDate() - days + 1);
-    fromDay = first.toISOString().slice(0, 10);
-  }
-
-  const start = istDateRange(fromDay)!.start;
-  const end = istDateRange(toDay)!.end;
 
   // Enumerate IST date labels from fromDay to toDay inclusive
   const dateLabels: string[] = [];
@@ -65,7 +50,7 @@ export async function GET(req: NextRequest) {
     deliveryMatch.vehicle = new Types.ObjectId(vehicleIdParam);
   }
 
-  const registrationMatch: MatchType = { createdAt: { $gte: start, $lte: end } };
+  const registrationMatch: MatchType = newCustomerMatch(range);
 
   const [deliveryAgg, registrationAgg] = await Promise.all([
     SupplyLog.aggregate([

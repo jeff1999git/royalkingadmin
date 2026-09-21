@@ -4,6 +4,7 @@ import { useSession } from "next-auth/react";
 import { useEffect, Suspense } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import InstallPrompt from "./components/InstallPrompt";
 
 function HomeContent() {
   const { data: session, status } = useSession();
@@ -111,6 +112,8 @@ function HomeContent() {
                   <h3 style={{ fontSize: "1.2rem", fontWeight: 700, margin: 0, color: "var(--text-primary)" }}>Driver Portal</h3>
                 </div>
               </Link>
+
+              <InstallPrompt />
             </>
           )}
         </div>

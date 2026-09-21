@@ -4,6 +4,7 @@ import { useState, FormEvent, useEffect, Suspense } from "react";
 import { signIn, useSession } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
+import InstallPrompt from "../components/InstallPrompt";
 
 // Inner form component that uses useSearchParams
 function LoginForm() {
@@ -125,6 +126,10 @@ function LoginForm() {
                             </Link>
                         ) : null}
                     </div>
+                </div>
+
+                <div style={{ marginTop: "1rem" }}>
+                    <InstallPrompt />
                 </div>
             </div>
         </div>
