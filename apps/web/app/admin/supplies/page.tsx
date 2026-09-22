@@ -3,10 +3,18 @@
 /* eslint-disable @next/next/no-img-element */
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { toCsv, type CsvValue } from "../../../lib/csv";
+import {
+  googleClientId,
+  loadGoogleIdentity,
+  requestDriveToken,
+  saveCsvAsGoogleSheet,
+} from "../../../lib/googleDrive";
 import { cloudinaryAuto, cloudinaryThumb } from "../../../lib/imageUrl";
 import {
   deliveredQuantity,
   parseOptionalNumber,
+  productLabel,
   toProductType,
   validateDeliveryQuantities,
   type DeliveryQuantities,
@@ -14,6 +22,7 @@ import {
 } from "../../../lib/supplyProduct";
 import ProductPill from "../../components/ProductPill";
 import {
+  fetchAllSupplies,
   useAdminAddedSupplies,
   useAdminCashCredits,
   useAdminCustomers,
@@ -185,6 +194,75 @@ function ProductRadios({
   );
 }
 
+// ── Sheet (CSV) download ──
+// Date and 24-hour time as separate columns in the viewer's local time, in a
+// form Google Sheets and Excel both read as a real date and time.
+function sheetDateTime(value: string) {
+  const d = new Date(value);
+  const pad = (n: number) => `${n}`.padStart(2, "0");
+  return {
+    date: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,
+    time: `${pad(d.getHours())}:${pad(d.getMinutes())}`,
+  };
+}
+
+function paymentLabel(ps?: SupplyLog["paymentStatus"]) {
+  return !ps || ps === "cash" ? "Cash" : ps === "upi" ? "UPI" : "Not Paid";
+}
+
+const blankToNull = (value?: string) => (value?.trim() ? value.trim() : null);
+
+// One row per delivery, then a totals row after a blank line so the data
+// block stays easy to sort and filter.
+function deliverySheetRows(logs: SupplyLog[]): CsvValue[][] {
+  const header = [
+    "No.", "Date", "Time", "Driver", "Customer", "Area", "Product",
+    "Cans Delivered", "Cases Delivered", "Cans Taken Back", "Amount (₹)",
+    "Payment", "Vehicle", "Driver Note", "Admin Remark",
+  ];
+  const totals = { cans: 0, cases: 0, takenBack: 0, amount: 0 };
+  const rows = logs.map<CsvValue[]>((log, index) => {
+    const { date, time } = sheetDateTime(log.suppliedAt);
+    totals.cans += log.cansDelivered ?? 0;
+    totals.cases += log.casesDelivered ?? 0;
+    totals.takenBack += log.cansTakenBack ?? 0;
+    totals.amount += log.amount ?? 0;
+    return [
+      index + 1, date, time,
+      log.driver?.name,
+      log.customer?.name ?? log.pointName,
+      log.customer?.area,
+      productLabel(toProductType(log.productType)),
+      log.cansDelivered, log.casesDelivered, log.cansTakenBack, log.amount,
+      paymentLabel(log.paymentStatus),
+      log.vehicle ? [log.vehicle.name, log.vehicle.vehicleNumber].filter(Boolean).join(" - ") : null,
+      blankToNull(log.notes),
+      blankToNull(log.adminRemark),
+    ];
+  });
+  const totalRow: CsvValue[] = ["Total", null, null, null, null, null, null, totals.cans, totals.cases, totals.takenBack, totals.amount];
+  return [header, ...rows, [], totalRow];
+}
+
+function cashSheetRows(logs: SupplyLog[]): CsvValue[][] {
+  const header = ["No.", "Date", "Time", "Driver", "Type", "Amount (₹)", "Driver Remark", "Admin Remark", "Bill Image"];
+  let totalAmount = 0;
+  const rows = logs.map<CsvValue[]>((log, index) => {
+    const { date, time } = sheetDateTime(log.suppliedAt);
+    totalAmount += log.amount ?? 0;
+    return [
+      index + 1, date, time,
+      log.driver?.name,
+      log.cashType === "fuel" ? "Fuel" : log.cashType === "debit" ? "Debit" : null,
+      log.amount,
+      blankToNull(log.notes),
+      blankToNull(log.adminRemark),
+      log.billImageUrl,
+    ];
+  });
+  return [header, ...rows, [], ["Total", null, null, null, null, totalAmount]];
+}
+
 // Driver-entered text (names, notes, remarks) goes into the print window's
 // raw HTML — escape it so it can never run as markup there.
 function escapeHtml(value: string | number) {
@@ -226,6 +304,9 @@ export default function SuppliesPage() {
   const [editingProductType, setEditingProductType] = useState<ProductType>("can");
   const [editingPaymentStatus, setEditingPaymentStatus] = useState<"cash" | "upi" | "not_paid">("cash");
   const [editSaving, setEditSaving] = useState(false);
+  const [sheetDownloading, setSheetDownloading] = useState(false);
+  const [driveSaving, setDriveSaving] = useState(false);
+  const [driveSheetLink, setDriveSheetLink] = useState<string | null>(null);
   const [deleteSaving, setDeleteSaving] = useState(false);
   const [confirmDeleteLog, setConfirmDeleteLog] = useState<SupplyLog | null>(null);
 
@@ -351,9 +432,12 @@ export default function SuppliesPage() {
     };
   }, [activeData]);
 
+  function exportDatePart() {
+    return filters.date || filters.month || new Date().toISOString().slice(0, 10);
+  }
+
   function exportFilenameBase() {
-    const datePart = filters.date || filters.month || new Date().toISOString().slice(0, 10);
-    return supplyTab === "water" ? `water-supplies-${datePart}` : `cash-credits-${datePart}`;
+    return supplyTab === "water" ? `water-supplies-${exportDatePart()}` : `cash-credits-${exportDatePart()}`;
   }
 
   function exportRows() {
@@ -670,6 +754,55 @@ export default function SuppliesPage() {
     }, "image/png");
   }
 
+  // Unlike Photo and PDF (the rows on screen), the sheet holds every entry
+  // matching the filters, so it matches the summary totals. With no filters
+  // that is the last RECENT_DAYS days.
+  async function handleDownloadSheet() {
+    setSheetDownloading(true);
+    setError("");
+    try {
+      const logs = await fetchAllSupplies(supplyTab, queryFilters);
+      const csv = toCsv(supplyTab === "water" ? deliverySheetRows(logs) : cashSheetRows(logs));
+      triggerDownload(`${exportFilenameBase()}.csv`, new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    } catch {
+      setError("Couldn't prepare the sheet. Please try again.");
+    } finally {
+      setSheetDownloading(false);
+    }
+  }
+
+  // Preload Google's sign-in script so the popup opens straight from the click.
+  useEffect(() => {
+    if (googleClientId) void loadGoogleIdentity().catch(() => undefined);
+  }, []);
+
+  // Same rows as Download Sheet, saved into the admin's Google Drive as a
+  // Google Sheet.
+  async function handleSaveToDrive() {
+    setError("");
+    setDriveSheetLink(null);
+    if (!googleClientId) {
+      setError("Saving to Google Drive isn't set up yet: add NEXT_PUBLIC_GOOGLE_CLIENT_ID (see the README).");
+      return;
+    }
+    setDriveSaving(true);
+    try {
+      await loadGoogleIdentity();
+      const token = await requestDriveToken();
+      const logs = await fetchAllSupplies(supplyTab, queryFilters);
+      const csv = toCsv(supplyTab === "water" ? deliverySheetRows(logs) : cashSheetRows(logs), { bom: false });
+      const now = new Date();
+      const savedAt = `${`${now.getHours()}`.padStart(2, "0")}:${`${now.getMinutes()}`.padStart(2, "0")}`;
+      const title = `Royal King ${supplyTab === "water" ? "Water Supplies" : "Cash Credits"} ${exportDatePart()} (saved ${savedAt})`;
+      const file = await saveCsvAsGoogleSheet(token, title, csv);
+      setDriveSheetLink(file.webViewLink);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't save to Google Drive. Please try again.");
+    } finally {
+      setDriveSaving(false);
+    }
+  }
+
   function handleDownloadPdf() {
     openReportWindowAndPrint();
   }
@@ -903,7 +1036,33 @@ export default function SuppliesPage() {
             <button type="button" className="btn btn-secondary btn-sm" onClick={handleDownloadPdf}>
               Download PDF
             </button>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={() => void handleDownloadSheet()}
+              disabled={sheetDownloading}
+              title="Spreadsheet (.csv) of every entry matching the filters. Opens in Google Sheets or Excel."
+            >
+              {sheetDownloading ? "Preparing..." : "Download Sheet"}
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={() => void handleSaveToDrive()}
+              disabled={driveSaving}
+              title="Save every entry matching the filters as a Google Sheet in your Google Drive."
+            >
+              {driveSaving ? "Saving to Drive..." : "Save to Google Drive"}
+            </button>
           </div>
+          {driveSheetLink && (
+            <div className="alert alert-success" style={{ marginTop: "0.75rem" }}>
+              Saved to your Google Drive.{" "}
+              <a href={driveSheetLink} target="_blank" rel="noopener noreferrer" style={{ fontWeight: 700, textDecoration: "underline" }}>
+                Open the sheet
+              </a>
+            </div>
+          )}
         </div>
 
       <div className="card" style={{ marginBottom: "1rem" }}>

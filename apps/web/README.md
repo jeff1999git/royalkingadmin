@@ -44,6 +44,27 @@ The app can be installed to a phone or desktop home screen. It then opens full-s
 
 **Proxy.** `proxy.ts` must keep `/sw.js`, `/manifest.webmanifest`, `/offline.html` and `/icons/*` out of its matcher. They have to load without a session.
 
+## Spreadsheet exports and Google Drive
+
+The Deliveries page (both tabs) has two spreadsheet options next to Download Photo and Download PDF:
+
+- **Download Sheet** downloads a `.csv` file that opens in Google Sheets or Excel.
+- **Save to Google Drive** creates a Google Sheet in the signed-in admin's own Drive and shows a link to open it.
+
+Both contain every entry matching the current filters, the same rows the summary bar totals, not just the page on screen. With no filters that is the last 5 days. Photo and PDF still export the rows on screen.
+
+**How Drive saving works.** It runs in the browser (`lib/googleDrive.ts`). The first time, Google shows a popup to pick an account and allow access; the sign-in lasts about an hour in that tab. The sheet goes straight from the browser to Google, not through our server. The app asks only for the `drive.file` permission, so it can see the sheets it creates and nothing else in the Drive. Sheets land in the top level of My Drive, named like `Royal King Water Supplies 2026-09 (saved 14:05)`.
+
+**One-time setup** (in Google Cloud Console, with the Google account that owns the app):
+
+1. Create a project, or pick an existing one.
+2. Enable the **Google Drive API** for it.
+3. Set up the OAuth consent screen: app name and support email, audience **External** (or Internal on Google Workspace), and add the scope `https://www.googleapis.com/auth/drive.file`. While the app is in Testing, add each admin's Google account as a test user, or publish the app. `drive.file` is a non-sensitive scope, so Google doesn't need to review the app for it.
+4. Create an **OAuth client ID** of type **Web application**. Under **Authorized JavaScript origins**, add every address the admin page is opened from, exactly as the browser shows it: `http://localhost:3000`, the production URL, and in GitHub Codespaces the forwarded `https://…-3000.app.github.dev` address. No redirect URI is needed.
+5. Put the client ID in `NEXT_PUBLIC_GOOGLE_CLIENT_ID` in `apps/web/.env` and in the hosting provider's environment variables, then restart `npm run dev` or rebuild. The value is built into the page, so a running server won't pick it up.
+
+Until the client ID is set, the button explains that Drive saving isn't set up yet. Download Sheet works without any setup.
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:
