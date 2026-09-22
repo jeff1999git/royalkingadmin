@@ -36,7 +36,7 @@ export async function GET(req: NextRequest) {
     const [total, customers] = await Promise.all([
       Customer.countDocuments(match),
       Customer.find(match)
-        .select("name phone area address locationType subscriptionCans cashPerCan isActive isDeleted registeredDate createdAt createdBy")
+        .select("name phone area address locationType subscriptionCans cashPerCan cashPerCase isActive isDeleted registeredDate createdAt createdBy")
         .sort({ createdAt: -1, _id: -1 })
         .limit(MAX_CUSTOMERS)
         .lean(),

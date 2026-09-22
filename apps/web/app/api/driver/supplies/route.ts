@@ -5,6 +5,14 @@ import { authOptions } from "../../../../lib/auth";
 import { deleteImageFromCloudinary, uploadImageToCloudinary } from "../../../../lib/cloudinary";
 import { istDateRange, istDayEnd, istDayStart } from "../../../../lib/istTime";
 import { connectToDatabase } from "../../../../lib/mongodb";
+import {
+  autoAmount,
+  parseOptionalNumber,
+  toProductType,
+  validateDeliveryQuantities,
+  type DeliveryQuantities,
+  type ProductType,
+} from "../../../../lib/supplyProduct";
 import SupplyLog from "../../../../models/SupplyLog";
 import Customer from "../../../../models/Customer";
 import "../../../../models/Vehicle";
@@ -12,8 +20,10 @@ import "../../../../models/Vehicle";
 type DriverSupplyRequestBody = {
   logType?: "water" | "cash";
   customerId?: string;
+  productType?: "can" | "case";
   cansDelivered?: number | string;
   cansTakenBack?: number | string;
+  casesDelivered?: number | string;
   vehicleId?: string;
   notes?: string;
   amount?: number | string;
@@ -34,6 +44,8 @@ async function parseDriverSupplyRequest(req: NextRequest): Promise<DriverSupplyR
       customerId: typeof formData.get("customerId") === "string" ? formData.get("customerId") as string : undefined,
       cansDelivered: typeof formData.get("cansDelivered") === "string" ? formData.get("cansDelivered") as string : undefined,
       cansTakenBack: typeof formData.get("cansTakenBack") === "string" ? formData.get("cansTakenBack") as string : undefined,
+      productType: typeof formData.get("productType") === "string" ? (formData.get("productType") as "can" | "case") : undefined,
+      casesDelivered: typeof formData.get("casesDelivered") === "string" ? formData.get("casesDelivered") as string : undefined,
       vehicleId: typeof formData.get("vehicleId") === "string" ? formData.get("vehicleId") as string : undefined,
       notes: typeof formData.get("notes") === "string" ? formData.get("notes") as string : undefined,
       amount: typeof formData.get("amount") === "string" ? formData.get("amount") as string : undefined,
@@ -95,14 +107,13 @@ export async function POST(req: NextRequest) {
   const customerId = body.customerId?.trim();
   const vehicleId = body.vehicleId?.trim();
   const notes = body.notes?.trim();
-  const cansDelivered =
-    body.cansDelivered === undefined || body.cansDelivered === ""
-      ? undefined
-      : Number(body.cansDelivered);
-  const cansTakenBack =
-    body.cansTakenBack === undefined || body.cansTakenBack === ""
-      ? undefined
-      : Number(body.cansTakenBack);
+  const productType = toProductType(body.productType);
+  const quantities: DeliveryQuantities = {
+    productType,
+    cansDelivered: parseOptionalNumber(body.cansDelivered),
+    cansTakenBack: parseOptionalNumber(body.cansTakenBack),
+    casesDelivered: parseOptionalNumber(body.casesDelivered),
+  };
   const amountValue =
     body.amount === undefined || body.amount === null || body.amount === ""
       ? undefined
@@ -117,14 +128,9 @@ export async function POST(req: NextRequest) {
     if (!Types.ObjectId.isValid(customerId)) {
       return NextResponse.json({ error: "Invalid customer." }, { status: 400 });
     }
-    if (cansDelivered === undefined && cansTakenBack === undefined) {
-      return NextResponse.json({ error: "Enter cans delivered, cans taken back, or both." }, { status: 400 });
-    }
-    if (cansDelivered !== undefined && (!Number.isInteger(cansDelivered) || cansDelivered < 0)) {
-      return NextResponse.json({ error: "Cans delivered must be a non-negative integer." }, { status: 400 });
-    }
-    if (cansTakenBack !== undefined && (!Number.isInteger(cansTakenBack) || cansTakenBack < 0)) {
-      return NextResponse.json({ error: "Cans taken back must be a non-negative integer." }, { status: 400 });
+    const quantityError = validateDeliveryQuantities(quantities);
+    if (quantityError) {
+      return NextResponse.json({ error: quantityError }, { status: 400 });
     }
     if (vehicleId && !Types.ObjectId.isValid(vehicleId)) {
       return NextResponse.json({ error: "Invalid vehicle." }, { status: 400 });
@@ -158,9 +164,7 @@ export async function POST(req: NextRequest) {
     if (!customer) {
       return NextResponse.json({ error: "Customer not found or inactive." }, { status: 404 });
     }
-    if (cansDelivered !== undefined && customer.cashPerCan !== undefined) {
-      calculatedAmount = cansDelivered * customer.cashPerCan;
-    }
+    calculatedAmount = autoAmount(customer, quantities);
   }
 
   let uploadedBillImage: { secureUrl: string; publicId: string } | null = null;
@@ -177,8 +181,10 @@ export async function POST(req: NextRequest) {
       logType: "water" | "cash";
       customer?: string;
       vehicle?: string;
+      productType?: ProductType;
       cansDelivered?: number;
       cansTakenBack?: number;
+      casesDelivered?: number;
       amount?: number;
       paymentStatus?: "cash" | "upi" | "not_paid";
       cashType?: "debit" | "fuel";
@@ -193,8 +199,13 @@ export async function POST(req: NextRequest) {
 
     if (logType === "water") {
       payload.customer = customerId;
-      payload.cansDelivered = cansDelivered;
-      if (cansTakenBack !== undefined) payload.cansTakenBack = cansTakenBack;
+      payload.productType = productType;
+      if (productType === "case") {
+        payload.casesDelivered = quantities.casesDelivered;
+      } else {
+        if (quantities.cansDelivered !== undefined) payload.cansDelivered = quantities.cansDelivered;
+        if (quantities.cansTakenBack !== undefined) payload.cansTakenBack = quantities.cansTakenBack;
+      }
       if (vehicleId) payload.vehicle = vehicleId;
       if (calculatedAmount !== undefined) payload.amount = calculatedAmount;
       const ps = body.paymentStatus;

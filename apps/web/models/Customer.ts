@@ -9,6 +9,7 @@ export interface CustomerDocument {
   locationType?: "home" | "office" | "both";
   subscriptionCans: number;
   cashPerCan?: number;
+  cashPerCase?: number;
   securityDeposit?: number;
   isActive: boolean;
   isDeleted: boolean;
@@ -28,6 +29,7 @@ const CustomerSchema = new Schema<CustomerDocument>(
     locationType: { type: String, enum: ["home", "office", "both"] },
     subscriptionCans: { type: Number, default: 1, min: 1 },
     cashPerCan: { type: Number, min: 0 },
+    cashPerCase: { type: Number, min: 0 },
     securityDeposit: { type: Number, min: 0 },
     isActive: { type: Boolean, default: true },
     isDeleted: { type: Boolean, default: false },

@@ -7,10 +7,14 @@ export interface SupplyLogDocument {
   pointName?: string;
   cansDelivered?: number;
   cansTakenBack?: number;
+  casesDelivered?: number;
   suppliedAt: Date;
   notes?: string;
   amount?: number;
   logType: "water" | "cash";
+  // Absent on cash rows and on deliveries saved before the field existed;
+  // read it through toProductType() from lib/supplyProduct.
+  productType?: "can" | "case";
   cashType?: "debit" | "fuel";
   paymentStatus?: "cash" | "upi" | "not_paid";
   adminRemark?: string;
@@ -38,6 +42,7 @@ const SupplyLogSchema = new Schema<SupplyLogDocument>(
     pointName: { type: String },
     cansDelivered: { type: Number },
     cansTakenBack: { type: Number, min: 0 },
+    casesDelivered: { type: Number, min: 1 },
     suppliedAt: { type: Date, required: true },
     notes: { type: String },
     amount: { type: Number },
@@ -47,6 +52,11 @@ const SupplyLogSchema = new Schema<SupplyLogDocument>(
       default: "water",
       required: true,
     },
+    // Water rows only. A row carries exactly one quantity family matching it:
+    // cansDelivered (+ cansTakenBack) for "can", casesDelivered for "case".
+    // Older rows have no productType and count as "can", so filter cans with
+    // { productType: { $ne: "case" } }, never { productType: "can" }.
+    productType: { type: String, enum: ["can", "case"] },
     cashType: {
       type: String,
       enum: ["debit", "fuel"],

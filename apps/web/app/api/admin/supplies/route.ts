@@ -4,6 +4,15 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "../../../../lib/auth";
 import { istDateRange, istDayEnd, istDayStart, istMonthRange } from "../../../../lib/istTime";
 import { connectToDatabase } from "../../../../lib/mongodb";
+import {
+  autoAmount,
+  deliveredQuantity,
+  parseOptionalNumber,
+  SUM_CASES,
+  toProductType,
+  validateDeliveryQuantities,
+  type DeliveryQuantities,
+} from "../../../../lib/supplyProduct";
 import SupplyLog from "../../../../models/SupplyLog";
 import Customer from "../../../../models/Customer";
 
@@ -37,6 +46,7 @@ export async function GET(req: NextRequest) {
   const amountStatusParam = req.nextUrl.searchParams.get("amountStatus");
   const logTypeParam = req.nextUrl.searchParams.get("logType");
   const paymentStatusParam = req.nextUrl.searchParams.get("paymentStatus");
+  const productTypeParam = req.nextUrl.searchParams.get("productType");
 
   // Values are stored pre-cast (ObjectId, Date) so the same query object works
   // for both find() and aggregate() — aggregation pipelines skip schema casting.
@@ -48,6 +58,7 @@ export async function GET(req: NextRequest) {
     amount?: { $exists?: boolean; $ne?: null };
     logType?: "water" | "cash";
     paymentStatus?: "upi" | "not_paid" | { $nin: ("upi" | "not_paid")[] };
+    productType?: "case" | { $ne: "case" };
   } = {};
 
   if (dateParam) {
@@ -122,6 +133,15 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Invalid paymentStatus value." }, { status: 400 });
   }
 
+  if (productTypeParam === "can") {
+    // Include records explicitly marked "can" AND old records with no field set
+    query.productType = { $ne: "case" };
+  } else if (productTypeParam === "case") {
+    query.productType = "case";
+  } else if (productTypeParam) {
+    return NextResponse.json({ error: "Invalid productType value." }, { status: 400 });
+  }
+
   try {
     await connectToDatabase();
     void Customer; // ensure model is registered for populate
@@ -173,6 +193,7 @@ export async function GET(req: NextRequest) {
             count: { $sum: 1 },
             totalCans: { $sum: { $ifNull: ["$cansDelivered", 0] } },
             totalCansTakenBack: { $sum: { $ifNull: ["$cansTakenBack", 0] } },
+            totalCases: SUM_CASES,
             totalAmount: { $sum: { $ifNull: ["$amount", 0] } },
             driverIds: { $addToSet: "$driver" },
             customerIds: { $addToSet: "$customer" },
@@ -182,7 +203,7 @@ export async function GET(req: NextRequest) {
       extraCountPromise,
     ]);
 
-    const agg = aggResult[0] as { count: number; totalCans: number; totalCansTakenBack: number; totalAmount: number; driverIds: unknown[]; customerIds: unknown[] } | undefined;
+    const agg = aggResult[0] as { count: number; totalCans: number; totalCansTakenBack: number; totalCases: number; totalAmount: number; driverIds: unknown[]; customerIds: unknown[] } | undefined;
     const total = agg?.count ?? 0;
     let totalPages: number;
     let serialStart: number;
@@ -199,6 +220,7 @@ export async function GET(req: NextRequest) {
     const stats = {
       totalCans: agg?.totalCans ?? 0,
       totalCansTakenBack: agg?.totalCansTakenBack ?? 0,
+      totalCases: agg?.totalCases ?? 0,
       totalAmount: agg?.totalAmount ?? 0,
       uniqueDrivers: agg?.driverIds?.length ?? 0,
       uniqueCustomers: agg?.customerIds?.length ?? 0,
@@ -221,8 +243,10 @@ export async function POST(req: NextRequest) {
     driverId?: string;
     customerId?: string;
     logType?: "water" | "cash";
+    productType?: "can" | "case";
     cansDelivered?: number | string;
     cansTakenBack?: number | string;
+    casesDelivered?: number | string;
     amount?: number | string;
     cashType?: "debit" | "fuel";
     vehicleId?: string;
@@ -245,14 +269,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Valid driver is required." }, { status: 400 });
   }
 
-  const cansDelivered =
-    body.cansDelivered !== undefined && body.cansDelivered !== ""
-      ? Number(body.cansDelivered)
-      : undefined;
-  const cansTakenBack =
-    body.cansTakenBack !== undefined && body.cansTakenBack !== ""
-      ? Number(body.cansTakenBack)
-      : undefined;
+  const productType = toProductType(body.productType);
+  const quantities: DeliveryQuantities = {
+    productType,
+    cansDelivered: parseOptionalNumber(body.cansDelivered),
+    cansTakenBack: parseOptionalNumber(body.cansTakenBack),
+    casesDelivered: parseOptionalNumber(body.casesDelivered),
+  };
   const amountValue =
     body.amount !== undefined && body.amount !== ""
       ? Number(body.amount)
@@ -262,14 +285,9 @@ export async function POST(req: NextRequest) {
     if (!customerId || !Types.ObjectId.isValid(customerId)) {
       return NextResponse.json({ error: "Valid customer is required." }, { status: 400 });
     }
-    if (cansDelivered === undefined && cansTakenBack === undefined) {
-      return NextResponse.json({ error: "Enter cans delivered, cans taken back, or both." }, { status: 400 });
-    }
-    if (cansDelivered !== undefined && (!Number.isInteger(cansDelivered) || cansDelivered < 0)) {
-      return NextResponse.json({ error: "Cans delivered must be a non-negative integer." }, { status: 400 });
-    }
-    if (cansTakenBack !== undefined && (!Number.isInteger(cansTakenBack) || cansTakenBack < 0)) {
-      return NextResponse.json({ error: "Cans taken back must be a non-negative integer." }, { status: 400 });
+    const quantityError = validateDeliveryQuantities(quantities);
+    if (quantityError) {
+      return NextResponse.json({ error: quantityError }, { status: 400 });
     }
   }
 
@@ -284,15 +302,15 @@ export async function POST(req: NextRequest) {
 
   await connectToDatabase();
 
+  // An amount typed by the admin wins; otherwise price from the customer's rate
+  // for the chosen product.
   let calculatedAmount = amountValue;
-  if (logType === "water" && customerId && cansDelivered !== undefined && calculatedAmount === undefined) {
+  if (logType === "water" && customerId && deliveredQuantity(quantities) !== undefined && calculatedAmount === undefined) {
     const customer = await Customer.findOne({ _id: customerId, isActive: true }).lean();
     if (!customer) {
       return NextResponse.json({ error: "Customer not found or inactive." }, { status: 404 });
     }
-    if (customer.cashPerCan !== undefined) {
-      calculatedAmount = cansDelivered * customer.cashPerCan;
-    }
+    calculatedAmount = autoAmount(customer, quantities);
   }
 
   try {
@@ -305,8 +323,13 @@ export async function POST(req: NextRequest) {
 
     if (logType === "water") {
       payload.customer = new Types.ObjectId(customerId!);
-      if (cansDelivered !== undefined) payload.cansDelivered = cansDelivered;
-      if (cansTakenBack !== undefined) payload.cansTakenBack = cansTakenBack;
+      payload.productType = productType;
+      if (productType === "case") {
+        payload.casesDelivered = quantities.casesDelivered;
+      } else {
+        if (quantities.cansDelivered !== undefined) payload.cansDelivered = quantities.cansDelivered;
+        if (quantities.cansTakenBack !== undefined) payload.cansTakenBack = quantities.cansTakenBack;
+      }
       if (vehicleId && Types.ObjectId.isValid(vehicleId)) payload.vehicle = new Types.ObjectId(vehicleId);
       if (calculatedAmount !== undefined) payload.amount = calculatedAmount;
     } else {

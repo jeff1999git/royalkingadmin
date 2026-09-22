@@ -5,6 +5,15 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { cloudinaryAuto, cloudinaryThumb } from "../../../lib/imageUrl";
 import {
+  deliveredQuantity,
+  parseOptionalNumber,
+  toProductType,
+  validateDeliveryQuantities,
+  type DeliveryQuantities,
+  type ProductType,
+} from "../../../lib/supplyProduct";
+import ProductPill from "../../components/ProductPill";
+import {
   useAdminAddedSupplies,
   useAdminCashCredits,
   useAdminCustomers,
@@ -20,9 +29,12 @@ interface SupplyLog {
   pointName?: string;
   cansDelivered?: number;
   cansTakenBack?: number;
+  casesDelivered?: number;
   notes?: string;
   amount?: number;
   logType?: "water" | "cash";
+  // Missing on older deliveries, which count as "can".
+  productType?: ProductType;
   cashType?: "debit" | "fuel";
   paymentStatus?: "cash" | "upi" | "not_paid";
   adminRemark?: string;
@@ -54,6 +66,7 @@ type ExportRow = {
   driver: string;
   customer?: string;
   cans?: string;
+  cases?: string;
   cansTakenBack?: string;
   vehicle?: string;
   amount: string;
@@ -75,6 +88,7 @@ type Filters = {
   vehicle: string;
   customer: string;
   paymentStatus: "" | "cash" | "upi" | "not_paid";
+  productType: "" | ProductType;
 };
 
 function todayInputValue() {
@@ -141,6 +155,36 @@ function NotePreview({ note }: { note: string }) {
   );
 }
 
+// Quantities to send for a delivery form: the one quantity input holds the
+// chosen product's count; taken back only applies to cans.
+function formQuantities(productType: ProductType, quantity: string, takenBack: string): DeliveryQuantities {
+  return productType === "case"
+    ? { productType: "case", casesDelivered: parseOptionalNumber(quantity) }
+    : { productType: "can", cansDelivered: parseOptionalNumber(quantity), cansTakenBack: parseOptionalNumber(takenBack) };
+}
+
+// Radio pair for choosing Can or Case in the add and edit dialogs.
+function ProductRadios({
+  name,
+  value,
+  onChange,
+}: {
+  name: string;
+  value: ProductType;
+  onChange: (productType: ProductType) => void;
+}) {
+  return (
+    <div style={{ display: "flex", gap: "1rem", marginTop: "0.4rem", flexWrap: "wrap" }}>
+      {(["can", "case"] as const).map((pt) => (
+        <label key={pt} style={{ display: "flex", alignItems: "center", gap: "0.4rem", cursor: "pointer", fontWeight: value === pt ? 700 : 500 }}>
+          <input type="radio" name={name} value={pt} checked={value === pt} onChange={() => onChange(pt)} />
+          {pt === "can" ? "Can" : "Case"}
+        </label>
+      ))}
+    </div>
+  );
+}
+
 // Driver-entered text (names, notes, remarks) goes into the print window's
 // raw HTML — escape it so it can never run as markup there.
 function escapeHtml(value: string | number) {
@@ -167,6 +211,7 @@ export default function SuppliesPage() {
     vehicle: "",
     customer: "",
     paymentStatus: "",
+    productType: "",
   });
   const [error, setError] = useState("");
   const [selectedLog, setSelectedLog] = useState<SupplyLog | null>(null);
@@ -178,6 +223,7 @@ export default function SuppliesPage() {
   const [editingDriverRemark, setEditingDriverRemark] = useState("");
   const [editingCansDelivered, setEditingCansDelivered] = useState("");
   const [editingCansTakenBack, setEditingCansTakenBack] = useState("");
+  const [editingProductType, setEditingProductType] = useState<ProductType>("can");
   const [editingPaymentStatus, setEditingPaymentStatus] = useState<"cash" | "upi" | "not_paid">("cash");
   const [editSaving, setEditSaving] = useState(false);
   const [deleteSaving, setDeleteSaving] = useState(false);
@@ -188,6 +234,8 @@ export default function SuppliesPage() {
     driverId: "",
     customerId: "",
     suppliedAt: todayInputValue(),
+    productType: "can" as ProductType,
+    // Quantity of the chosen product (cans or cases).
     cansDelivered: "",
     cansTakenBack: "",
     amount: "",
@@ -200,7 +248,9 @@ export default function SuppliesPage() {
   const { data: customerOptions } = useAdminCustomers();
 
   // With no filters, page 1 is the last RECENT_DAYS days and Next/Prev walk
-  // older records. Any filter switches to normal unlimited pagination.
+  // older records. Any filter switches to normal unlimited pagination. The
+  // product filter is left out: it narrows within the same window, so the
+  // Cans and Cases totals add up to the unfiltered ones.
   const hasAnyFilter = Boolean(
     filters.date || filters.month || filters.driver || filters.vehicle || filters.customer || filters.paymentStatus,
   );
@@ -296,6 +346,7 @@ export default function SuppliesPage() {
       uniqueCustomers: s?.uniqueCustomers ?? 0,
       totalCans: s?.totalCans ?? 0,
       totalCansTakenBack: s?.totalCansTakenBack ?? 0,
+      totalCases: s?.totalCases ?? 0,
       totalAmount: s?.totalAmount ?? 0,
     };
   }, [activeData]);
@@ -312,6 +363,7 @@ export default function SuppliesPage() {
       driver: `${log.driver?.name ?? ""} (@${log.driver?.username ?? ""})`,
       customer: log.customer?.name ?? log.pointName ?? "-",
       cans: log.cansDelivered !== undefined ? String(log.cansDelivered) : "-",
+      cases: log.casesDelivered !== undefined ? String(log.casesDelivered) : "-",
       cansTakenBack: log.cansTakenBack !== undefined ? String(log.cansTakenBack) : "-",
       vehicle: `${log.vehicle?.name ?? ""} - ${log.vehicle?.vehicleNumber ?? ""}`,
       amount: log.amount !== undefined ? String(log.amount) : "-",
@@ -326,10 +378,11 @@ export default function SuppliesPage() {
       (acc, log) => {
         acc.amount += log.amount ?? 0;
         acc.cans += log.cansDelivered ?? 0;
+        acc.cases += log.casesDelivered ?? 0;
         acc.takenBack += log.cansTakenBack ?? 0;
         return acc;
       },
-      { amount: 0, cans: 0, takenBack: 0 },
+      { amount: 0, cans: 0, cases: 0, takenBack: 0 },
     );
   }
 
@@ -367,6 +420,7 @@ export default function SuppliesPage() {
           <th>Driver</th>
           <th>Customer</th>
           <th>Cans Del.</th>
+          <th>Cases Del.</th>
           <th>Taken Back</th>
           <th>Amount</th>
           <th>Admin Remark</th>
@@ -389,6 +443,7 @@ export default function SuppliesPage() {
           <td>${escapeHtml(r.driver)}</td>
           <td>${escapeHtml(r.customer ?? "-")}</td>
           <td>${escapeHtml(r.cans ?? "-")}</td>
+          <td>${escapeHtml(r.cases ?? "-")}</td>
           <td>${escapeHtml(r.cansTakenBack ?? "-")}</td>
           <td>${escapeHtml(r.amount)}</td>
           <td>${escapeHtml(r.remark)}</td>
@@ -404,6 +459,7 @@ export default function SuppliesPage() {
       : `<tr>
           <td colspan="4">Total</td>
           <td>${totals.cans}</td>
+          <td>${totals.cases}</td>
           <td>${totals.takenBack}</td>
           <td>${totals.amount.toLocaleString("en-IN")}</td>
           <td></td>
@@ -469,6 +525,7 @@ export default function SuppliesPage() {
           { key: "driver", title: "Driver", width: 260 },
           { key: "customer", title: "Customer", width: 220 },
           { key: "cans", title: "Cans Del.", width: 80 },
+          { key: "cases", title: "Cases Del.", width: 80 },
           { key: "cansTakenBack", title: "Taken Back", width: 90 },
           { key: "amount", title: "Amount", width: 110 },
           { key: "remark", title: "Admin Remark", width: 240 },
@@ -590,6 +647,7 @@ export default function SuppliesPage() {
       : {
           no: "Total",
           cans: String(totals.cans),
+          cases: String(totals.cases),
           cansTakenBack: String(totals.takenBack),
           amount: totals.amount.toLocaleString("en-IN"),
         };
@@ -617,7 +675,7 @@ export default function SuppliesPage() {
   }
 
   function clearFilters() {
-    setFilters({ date: "", month: "", driver: "", vehicle: "", customer: "", paymentStatus: "" });
+    setFilters({ date: "", month: "", driver: "", vehicle: "", customer: "", paymentStatus: "", productType: "" });
   }
 
   function openAddForm() {
@@ -625,6 +683,7 @@ export default function SuppliesPage() {
       driverId: "",
       customerId: "",
       suppliedAt: todayInputValue(),
+      productType: "can",
       cansDelivered: "",
       cansTakenBack: "",
       amount: "",
@@ -639,8 +698,10 @@ export default function SuppliesPage() {
     if (!addData.driverId) { setAddError("Please select a driver."); return; }
     if (!addData.customerId) { setAddError("Please select a customer."); return; }
     if (!addData.suppliedAt) { setAddError("Please enter a delivery date."); return; }
-    if (!addData.cansDelivered && !addData.cansTakenBack) {
-      setAddError("Enter cans delivered, cans taken back, or both.");
+    const quantities = formQuantities(addData.productType, addData.cansDelivered, addData.cansTakenBack);
+    const quantityError = validateDeliveryQuantities(quantities);
+    if (quantityError) {
+      setAddError(quantityError);
       return;
     }
     setAddSubmitting(true);
@@ -653,8 +714,7 @@ export default function SuppliesPage() {
           driverId: addData.driverId,
           customerId: addData.customerId,
           suppliedAt: addData.suppliedAt,
-          cansDelivered: addData.cansDelivered !== "" ? Number(addData.cansDelivered) : undefined,
-          cansTakenBack: addData.cansTakenBack !== "" ? Number(addData.cansTakenBack) : undefined,
+          ...quantities,
           amount: addData.amount !== "" ? Number(addData.amount) : undefined,
           notes: addData.notes || undefined,
         }),
@@ -678,7 +738,9 @@ export default function SuppliesPage() {
     setEditingRemark(log.adminRemark ?? "");
     setEditingCashType(log.cashType === "fuel" ? "fuel" : "debit");
     setEditingDriverRemark(log.notes ?? "");
-    setEditingCansDelivered(log.cansDelivered !== undefined ? String(log.cansDelivered) : "");
+    setEditingProductType(toProductType(log.productType));
+    const quantity = deliveredQuantity(log);
+    setEditingCansDelivered(quantity !== undefined ? String(quantity) : "");
     setEditingCansTakenBack(log.cansTakenBack !== undefined ? String(log.cansTakenBack) : "");
     const ps = log.paymentStatus;
     setEditingPaymentStatus(ps === "upi" || ps === "not_paid" ? ps : "cash");
@@ -690,6 +752,16 @@ export default function SuppliesPage() {
     if (editingLog.logType === "cash" && (!editingAmount || Number(editingAmount) < 0)) {
       setError("Please enter a valid amount.");
       return;
+    }
+    const quantities = formQuantities(editingProductType, editingCansDelivered, editingCansTakenBack);
+    if (editingLog.logType !== "cash") {
+      // Switching product needs the new quantity; a plain edit may leave it blank.
+      const switching = editingProductType !== toProductType(editingLog.productType);
+      const quantityError = validateDeliveryQuantities(quantities, { partial: !switching });
+      if (quantityError) {
+        setError(quantityError);
+        return;
+      }
     }
 
     setEditSaving(true);
@@ -706,8 +778,8 @@ export default function SuppliesPage() {
                 notes: editingDriverRemark,
               }
             : {
-                cansDelivered: editingCansDelivered !== "" ? Number(editingCansDelivered) : undefined,
-                cansTakenBack: editingCansTakenBack !== "" ? Number(editingCansTakenBack) : undefined,
+                // Always carries productType, so older rows get it recorded on save.
+                ...quantities,
                 notes: editingDriverRemark,
                 adminRemark: editingRemark,
                 paymentStatus: editingPaymentStatus,
@@ -716,28 +788,21 @@ export default function SuppliesPage() {
       });
       setEditSaving(false);
 
+      const data = (await res.json().catch(() => ({}))) as SupplyLog & { error?: string };
       if (!res.ok) {
-        setError("Failed to update. Please try again.");
+        setError(data.error ?? "Failed to update. Please try again.");
         return;
       }
 
-      const updated = (await res.json()) as SupplyLog;
+      const updated = data;
       const updatedWithFormatted = {
         ...updated,
         formattedSuppliedAt: updated.formattedSuppliedAt ?? formatDateTime(updated.suppliedAt),
       };
 
-      const listQueryKey =
-        editingLog.logType === "cash"
-          ? ["admin", "supplies", "cash-credits", queryFilters, cashPage]
-          : ["admin", "supplies", "added", queryFilters, waterPage];
-
-      queryClient.setQueryData<PaginatedSupplyLogsWithStats>(
-        listQueryKey,
-        (prev) => prev
-          ? { ...prev, logs: prev.logs.map((log) => log._id === updated._id ? updatedWithFormatted : log) }
-          : prev,
-      );
+      // Refetch rather than patch the row in place: quantity and product
+      // changes also move the summary totals, which come from the server.
+      void queryClient.invalidateQueries({ queryKey: ["admin", "supplies"] });
       setSelectedLog((prev) => prev && prev._id === updated._id ? updatedWithFormatted : prev);
       setEditingLog(null);
     } catch {
@@ -930,6 +995,21 @@ export default function SuppliesPage() {
               </select>
             </div>
           )}
+          {supplyTab === "water" && (
+            <div className="form-group">
+              <label className="form-label" htmlFor="filterProductType">Product</label>
+              <select
+                id="filterProductType"
+                className="form-select"
+                value={filters.productType}
+                onChange={(e) => setFilters((f) => ({ ...f, productType: e.target.value as Filters["productType"] }))}
+              >
+                <option value="">All Products</option>
+                <option value="can">Cans</option>
+                <option value="case">Cases</option>
+              </select>
+            </div>
+          )}
         </div>
 
         <div style={{ display: "flex", alignItems: "end" }}>
@@ -958,6 +1038,7 @@ export default function SuppliesPage() {
           <>
             <span><strong style={{ color: "var(--text-primary)" }}>Customers:</strong> {summary.uniqueCustomers}</span>
             <span><strong style={{ color: "var(--text-primary)" }}>Cans Del.:</strong> {summary.totalCans}</span>
+            <span><strong style={{ color: "var(--text-primary)" }}>Cases Del.:</strong> {summary.totalCases}</span>
             <span><strong style={{ color: "var(--text-primary)" }}>Taken Back:</strong> {summary.totalCansTakenBack}</span>
           </>
         )}
@@ -998,7 +1079,7 @@ export default function SuppliesPage() {
                     <tr>
                       <th>S.No</th>
                       {supplyTab === "water" ? <th>Customer</th> : <th>Amount</th>}
-                      {supplyTab === "water" ? <th>Cans</th> : <th>Type</th>}
+                      {supplyTab === "water" ? <th>Qty</th> : <th>Type</th>}
                       {supplyTab === "water" && <th>Amount</th>}
                       <th>Driver</th>
                     </tr>
@@ -1051,7 +1132,8 @@ export default function SuppliesPage() {
                         >
                           {supplyTab === "water" ? (
                             <div>
-                              <strong>{log.cansDelivered ?? "-"}</strong>
+                              <strong>{deliveredQuantity(log) ?? "-"}</strong>
+                              <div style={{ marginTop: "0.15rem" }}><ProductPill productType={log.productType} size="sm" /></div>
                               {log.cansTakenBack !== undefined && (
                                 <div style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>↩ {log.cansTakenBack}</div>
                               )}
@@ -1221,32 +1303,43 @@ export default function SuppliesPage() {
               </div>
 
               <div className="form-group">
-                <label className="form-label" htmlFor="addCansDelivered">Cans Delivered</label>
+                <label className="form-label">Product *</label>
+                <ProductRadios
+                  name="addProductType"
+                  value={addData.productType}
+                  onChange={(pt) => setAddData((d) => ({ ...d, productType: pt, cansDelivered: "", cansTakenBack: "" }))}
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label" htmlFor="addCansDelivered">{addData.productType === "case" ? "Cases Delivered" : "Cans Delivered"}</label>
                 <input
                   id="addCansDelivered"
                   className="form-input"
                   type="number"
-                  min="0"
+                  min={addData.productType === "case" ? "1" : "0"}
                   step="1"
-                  placeholder="e.g. 2"
+                  placeholder={addData.productType === "case" ? "e.g. 1" : "e.g. 2"}
                   value={addData.cansDelivered}
                   onChange={(e) => setAddData((d) => ({ ...d, cansDelivered: e.target.value }))}
                 />
               </div>
 
-              <div className="form-group">
-                <label className="form-label" htmlFor="addCansTakenBack">Cans Taken Back</label>
-                <input
-                  id="addCansTakenBack"
-                  className="form-input"
-                  type="number"
-                  min="0"
-                  step="1"
-                  placeholder="e.g. 0"
-                  value={addData.cansTakenBack}
-                  onChange={(e) => setAddData((d) => ({ ...d, cansTakenBack: e.target.value }))}
-                />
-              </div>
+              {addData.productType === "can" && (
+                <div className="form-group">
+                  <label className="form-label" htmlFor="addCansTakenBack">Cans Taken Back</label>
+                  <input
+                    id="addCansTakenBack"
+                    className="form-input"
+                    type="number"
+                    min="0"
+                    step="1"
+                    placeholder="e.g. 0"
+                    value={addData.cansTakenBack}
+                    onChange={(e) => setAddData((d) => ({ ...d, cansTakenBack: e.target.value }))}
+                  />
+                </div>
+              )}
 
               <div className="form-group">
                 <label className="form-label" htmlFor="addAmount">Amount (₹) — auto-calculated if blank</label>
@@ -1343,10 +1436,18 @@ export default function SuppliesPage() {
                   )}
                 </div>
               )}
-              {selectedLog.cansDelivered !== undefined && (
+              {selectedLog.logType !== "cash" && (
                 <div>
-                  <div className="text-sm text-muted">Cans Delivered</div>
-                  <div style={{ fontWeight: 700, fontSize: "1.1rem" }}>{selectedLog.cansDelivered}</div>
+                  <div className="text-sm text-muted">Product</div>
+                  <ProductPill productType={selectedLog.productType} />
+                </div>
+              )}
+              {deliveredQuantity(selectedLog) !== undefined && (
+                <div>
+                  <div className="text-sm text-muted">
+                    {toProductType(selectedLog.productType) === "case" ? "Cases Delivered" : "Cans Delivered"}
+                  </div>
+                  <div style={{ fontWeight: 700, fontSize: "1.1rem" }}>{deliveredQuantity(selectedLog)}</div>
                 </div>
               )}
               {selectedLog.cansTakenBack !== undefined && (
@@ -1581,29 +1682,56 @@ export default function SuppliesPage() {
             {editingLog.logType === "water" && (
               <>
                 <div className="form-group" style={{ marginBottom: "0.75rem" }}>
-                  <label className="form-label" htmlFor="editCansDelivered">Cans Delivered</label>
+                  <label className="form-label">Product</label>
+                  <ProductRadios
+                    name="editProductType"
+                    value={editingProductType}
+                    onChange={(pt) => {
+                      setEditingProductType(pt);
+                      if (pt === toProductType(editingLog.productType)) {
+                        // Back on the saved product: restore the saved quantities.
+                        const quantity = deliveredQuantity(editingLog);
+                        setEditingCansDelivered(quantity !== undefined ? String(quantity) : "");
+                        setEditingCansTakenBack(editingLog.cansTakenBack !== undefined ? String(editingLog.cansTakenBack) : "");
+                      } else {
+                        // A count entered for one product must never be saved as the other.
+                        setEditingCansDelivered("");
+                        setEditingCansTakenBack("");
+                      }
+                    }}
+                  />
+                  {editingProductType !== toProductType(editingLog.productType) && (
+                    <div className="text-sm text-muted" style={{ marginTop: "0.3rem" }}>
+                      Enter the {editingProductType === "case" ? "cases" : "cans"} delivered. The amount will be recalculated at the customer&apos;s {editingProductType} rate (cleared if none is set).
+                    </div>
+                  )}
+                </div>
+                <div className="form-group" style={{ marginBottom: "0.75rem" }}>
+                  <label className="form-label" htmlFor="editCansDelivered">{editingProductType === "case" ? "Cases Delivered" : "Cans Delivered"}</label>
                   <input
                     id="editCansDelivered"
                     className="form-input"
                     type="number"
-                    min="0"
+                    min={editingProductType === "case" ? "1" : "0"}
                     step="1"
                     value={editingCansDelivered}
                     onChange={(e) => setEditingCansDelivered(e.target.value)}
                   />
                 </div>
-                <div className="form-group" style={{ marginBottom: "0.75rem" }}>
-                  <label className="form-label" htmlFor="editCansTakenBack">Cans Taken Back</label>
-                  <input
-                    id="editCansTakenBack"
-                    className="form-input"
-                    type="number"
-                    min="0"
-                    step="1"
-                    value={editingCansTakenBack}
-                    onChange={(e) => setEditingCansTakenBack(e.target.value)}
-                  />
-                </div>
+                {editingProductType === "can" && (
+                  <div className="form-group" style={{ marginBottom: "0.75rem" }}>
+                    <label className="form-label" htmlFor="editCansTakenBack">Cans Taken Back</label>
+                    <input
+                      id="editCansTakenBack"
+                      className="form-input"
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={editingCansTakenBack}
+                      onChange={(e) => setEditingCansTakenBack(e.target.value)}
+                    />
+                  </div>
+                )}
                 <div className="form-group" style={{ marginBottom: "0.75rem" }}>
                   <label className="form-label">Payment Status</label>
                   <div style={{ display: "flex", gap: "1rem", marginTop: "0.4rem", flexWrap: "wrap" }}>
@@ -1684,6 +1812,8 @@ export default function SuppliesPage() {
                 </div>
               </>
             )}
+
+            {error && <div className="alert alert-error" style={{ marginBottom: "0.75rem" }}>{error}</div>}
 
             <button type="button" className="btn btn-primary" disabled={editSaving} onClick={() => void saveEdit()}>
               {editSaving ? "Saving..." : "Save"}

@@ -12,7 +12,7 @@ export async function GET() {
 
   await connectToDatabase();
   const customers = await Customer.find({ isActive: true })
-    .select("name phone area subscriptionCans cashPerCan locationType")
+    .select("name phone area subscriptionCans cashPerCan cashPerCase locationType")
     .sort({ name: 1 })
     .lean();
 
@@ -32,6 +32,7 @@ export async function POST(req: NextRequest) {
     address?: string;
     locationType?: "home" | "office" | "both";
     cashPerCan?: number | string;
+    cashPerCase?: number | string;
   };
 
   const name = body.name?.trim();
@@ -41,6 +42,7 @@ export async function POST(req: NextRequest) {
   const locationType = body.locationType;
   const cashPerCanRaw = body.cashPerCan;
   const cashPerCan = cashPerCanRaw !== undefined && cashPerCanRaw !== "" ? Number(cashPerCanRaw) : undefined;
+  const cashPerCase = body.cashPerCase !== undefined && body.cashPerCase !== "" ? Number(body.cashPerCase) : undefined;
 
   if (!name) return NextResponse.json({ error: "Name is required." }, { status: 400 });
   if (!phone) return NextResponse.json({ error: "Phone is required." }, { status: 400 });
@@ -50,6 +52,9 @@ export async function POST(req: NextRequest) {
   }
   if (isNaN(cashPerCan) || cashPerCan < 0) {
     return NextResponse.json({ error: "Cash per can must be a non-negative number." }, { status: 400 });
+  }
+  if (cashPerCase !== undefined && (isNaN(cashPerCase) || cashPerCase < 0)) {
+    return NextResponse.json({ error: "Cash per case must be a non-negative number." }, { status: 400 });
   }
   if (locationType && locationType !== "home" && locationType !== "office" && locationType !== "both") {
     return NextResponse.json({ error: "Location type must be home, office, or both." }, { status: 400 });
@@ -65,6 +70,7 @@ export async function POST(req: NextRequest) {
       locationType,
       subscriptionCans: 1,
       cashPerCan,
+      cashPerCase,
       registeredDate: new Date(),
       createdBy: session.user.id,
     });

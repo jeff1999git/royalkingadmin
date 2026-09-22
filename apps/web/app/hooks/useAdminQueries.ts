@@ -48,6 +48,7 @@ export interface Customer {
   locationType?: "home" | "office" | "both";
   subscriptionCans: number;
   cashPerCan?: number;
+  cashPerCase?: number;
   securityDeposit?: number;
   isActive: boolean;
   registeredDate?: string;
@@ -72,9 +73,12 @@ export interface SupplyLog {
   pointName?: string;
   cansDelivered?: number;
   cansTakenBack?: number;
+  casesDelivered?: number;
   notes?: string;
   amount?: number;
   logType?: "water" | "cash";
+  // Missing on older deliveries, which count as "can".
+  productType?: "can" | "case";
   cashType?: "debit" | "fuel";
   paymentStatus?: "cash" | "upi" | "not_paid";
   adminRemark?: string;
@@ -118,6 +122,7 @@ export interface PaginatedSupplyLogsWithStats {
   stats: {
     totalCans: number;
     totalCansTakenBack: number;
+    totalCases: number;
     totalAmount: number;
     uniqueDrivers: number;
     uniqueCustomers: number;
@@ -251,6 +256,7 @@ export function useAdminAddedSupplies(
     vehicle: string;
     customer?: string;
     paymentStatus?: string;
+    productType?: string;
     days?: number;
   },
   page: number,
@@ -272,6 +278,7 @@ export function useAdminAddedSupplies(
       if (filters.vehicle) params.set("vehicle", filters.vehicle);
       if (filters.customer) params.set("customer", filters.customer);
       if (filters.paymentStatus) params.set("paymentStatus", filters.paymentStatus);
+      if (filters.productType) params.set("productType", filters.productType);
       if (filters.days) params.set("days", String(filters.days));
 
       const res = await fetch(`/api/admin/supplies?${params.toString()}`, {
@@ -395,6 +402,7 @@ export interface NewCustomer {
   locationType?: "home" | "office" | "both";
   subscriptionCans: number;
   cashPerCan?: number;
+  cashPerCase?: number;
   isActive: boolean;
   isDeleted?: boolean;
   registeredDate?: string;
