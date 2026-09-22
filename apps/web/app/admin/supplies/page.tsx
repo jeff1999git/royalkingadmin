@@ -122,6 +122,25 @@ function maskText(value: string, max = 12) {
   return value.length > max ? `${value.slice(0, max)}...` : value;
 }
 
+// The driver's note on a log, or "" when there isn't one. Driver entries save
+// an empty note as "", so blank and whitespace-only notes count as none.
+function driverNote(log: { notes?: string }): string {
+  return log.notes?.trim() ?? "";
+}
+
+// One-line preview of a driver's note, shown in the table so it isn't missed.
+// The full text is in the tooltip and in the details dialog.
+function NotePreview({ note }: { note: string }) {
+  return (
+    <div className="supply-note" role="note" aria-label={`Driver note: ${note}`} title={note}>
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+      </svg>
+      <span aria-hidden="true">{note}</span>
+    </div>
+  );
+}
+
 // Driver-entered text (names, notes, remarks) goes into the print window's
 // raw HTML — escape it so it can never run as markup there.
 function escapeHtml(value: string | number) {
@@ -986,7 +1005,7 @@ export default function SuppliesPage() {
                   </thead>
                   <tbody>
                     {group.entries.map((log) => (
-                      <tr key={log._id}>
+                      <tr key={log._id} className={driverNote(log) ? "supply-row-noted" : undefined}>
                         <td
                           role="button"
                           tabIndex={0}
@@ -1016,6 +1035,7 @@ export default function SuppliesPage() {
                           {supplyTab === "water"
                             ? maskText(log.customer?.name ?? log.pointName ?? "-")
                             : (log.amount !== undefined ? log.amount : "-")}
+                          {driverNote(log) && <NotePreview note={driverNote(log)} />}
                         </td>
                         <td
                           role="button"

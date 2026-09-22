@@ -282,6 +282,47 @@ tbody td {
   vertical-align: middle;
 }
 
+/* ───── Supply log rows with a driver note (admin Deliveries) ───── */
+tbody tr.supply-row-noted {
+  background: #fffbeb;
+}
+
+tbody tr.supply-row-noted:hover {
+  background: #fef3c7;
+}
+
+tbody tr.supply-row-noted > td:first-child {
+  box-shadow: inset 3px 0 0 #f59e0b;
+}
+
+.supply-note {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-top: 0.3rem;
+  max-width: 360px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  line-height: 1.3;
+  color: #92400e;
+}
+
+.supply-note svg {
+  flex-shrink: 0;
+}
+
+.supply-note span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 600px) {
+  .supply-note {
+    max-width: 160px;
+  }
+}
+
 /* ───── Badge ───── */
 .badge {
   display: inline-flex;
