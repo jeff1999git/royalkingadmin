@@ -7,6 +7,8 @@ import {
   useAdminCustomerDetail,
   useAdminCustomerHistory,
 } from "../../../hooks/useAdminQueries";
+import { casesBySizeText, deliveredQuantity } from "../../../../lib/supplyProduct";
+import ProductPill from "../../../components/ProductPill";
 
 const locationTypeLabel = (lt?: string) =>
   lt === "home" ? "Home" : lt === "office" ? "Office" : lt === "both" ? "Both" : undefined;
@@ -217,6 +219,10 @@ export default function CustomerHistoryPage() {
       >
         <span><strong style={{ color: "var(--text-primary)" }}>Deliveries:</strong> {historyData?.total ?? 0}</span>
         <span><strong style={{ color: "var(--text-primary)" }}>Cans Del.:</strong> {stats?.totalCans ?? 0}</span>
+        <span>
+          <strong style={{ color: "var(--text-primary)" }}>Cases Del.:</strong> {stats?.totalCases ?? 0}
+          {casesBySizeText(stats?.casesBySize, stats?.totalCases ?? 0) && ` (${casesBySizeText(stats?.casesBySize, stats?.totalCases ?? 0)})`}
+        </span>
         <span><strong style={{ color: "var(--text-primary)" }}>Taken Back:</strong> {stats?.totalCansTakenBack ?? 0}</span>
         <span style={{ fontSize: "1.05rem", fontWeight: 800, color: "var(--text-primary)" }}>
           Total Amount: {(stats?.totalAmount ?? 0).toLocaleString("en-IN")}
@@ -246,7 +252,7 @@ export default function CustomerHistoryPage() {
               <tr>
                 <th>S.No</th>
                 <th>Date & Time</th>
-                <th>Cans</th>
+                <th>Qty</th>
                 <th>Taken Back</th>
                 <th>Amount</th>
                 <th>Payment</th>
@@ -258,7 +264,10 @@ export default function CustomerHistoryPage() {
                 <tr key={log._id}>
                   <td>{serialStart + index + 1}</td>
                   <td>{log.formattedSuppliedAt}</td>
-                  <td style={{ fontWeight: 700 }}>{log.cansDelivered ?? "-"}</td>
+                  <td style={{ fontWeight: 700 }}>
+                    {deliveredQuantity(log) ?? "-"}
+                    <div style={{ marginTop: "0.15rem" }}><ProductPill productType={log.productType} caseSize={log.caseSize} size="sm" /></div>
+                  </td>
                   <td>{log.cansTakenBack ?? "-"}</td>
                   <td>{log.amount !== undefined ? `₹${log.amount.toLocaleString("en-IN")}` : "-"}</td>
                   <td>

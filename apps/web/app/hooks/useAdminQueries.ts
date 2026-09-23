@@ -1,6 +1,7 @@
 "use client";
 
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { CaseSize, CasesBySize } from "../../lib/supplyProduct";
 
 function formatDateTime(value: string | Date) {
   return new Date(value).toLocaleString("en-IN", {
@@ -72,9 +73,14 @@ export interface SupplyLog {
   pointName?: string;
   cansDelivered?: number;
   cansTakenBack?: number;
+  casesDelivered?: number;
+  caseSize?: CaseSize;
+  casePrice?: number;
   notes?: string;
   amount?: number;
   logType?: "water" | "cash";
+  // Missing on older deliveries, which count as "can".
+  productType?: "can" | "case";
   cashType?: "debit" | "fuel";
   paymentStatus?: "cash" | "upi" | "not_paid";
   adminRemark?: string;
@@ -118,6 +124,8 @@ export interface PaginatedSupplyLogsWithStats {
   stats: {
     totalCans: number;
     totalCansTakenBack: number;
+    totalCases: number;
+    casesBySize: CasesBySize;
     totalAmount: number;
     uniqueDrivers: number;
     uniqueCustomers: number;
@@ -243,16 +251,49 @@ export function useAdminPaginatedSupplies(page: number, limit: number) {
 
 const SUPPLIES_PAGE_LIMIT = 50;
 
+type SupplyFilters = {
+  date: string;
+  month: string;
+  driver: string;
+  vehicle: string;
+  customer?: string;
+  paymentStatus?: string;
+  productType?: string;
+  days?: number;
+};
+
+// Query params for the Deliveries and Cash Credits lists. The sheet download
+// builds its request here too, so it always covers what the list shows.
+function supplyFilterParams(logType: "water" | "cash", filters: SupplyFilters) {
+  const params = new URLSearchParams();
+  params.set("logType", logType);
+  if (filters.date) params.set("date", filters.date);
+  if (filters.month) params.set("month", filters.month);
+  if (filters.driver) params.set("driver", filters.driver);
+  if (filters.vehicle) params.set("vehicle", filters.vehicle);
+  if (logType === "water") {
+    if (filters.customer) params.set("customer", filters.customer);
+    if (filters.paymentStatus) params.set("paymentStatus", filters.paymentStatus);
+    if (filters.productType) params.set("productType", filters.productType);
+  }
+  if (filters.days) params.set("days", String(filters.days));
+  return params;
+}
+
+// Every log matching the list's filters, not just the current page — the rows
+// behind the summary totals. Used for the sheet download.
+export async function fetchAllSupplies(logType: "water" | "cash", filters: SupplyFilters): Promise<SupplyLog[]> {
+  const res = await fetch(`/api/admin/supplies?${supplyFilterParams(logType, filters).toString()}`, {
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    throw new Error(logType === "water" ? "Failed to fetch water supplies" : "Failed to fetch cash credits");
+  }
+  return (await res.json()) as SupplyLog[];
+}
+
 export function useAdminAddedSupplies(
-  filters: {
-    date: string;
-    month: string;
-    driver: string;
-    vehicle: string;
-    customer?: string;
-    paymentStatus?: string;
-    days?: number;
-  },
+  filters: SupplyFilters,
   page: number,
   options?: { enabled?: boolean }
 ) {
@@ -262,17 +303,9 @@ export function useAdminAddedSupplies(
     enabled: options?.enabled ?? true,
     placeholderData: keepPreviousData,
     queryFn: async () => {
-      const params = new URLSearchParams();
-      params.set("logType", "water");
+      const params = supplyFilterParams("water", filters);
       params.set("page", String(page));
       params.set("limit", String(SUPPLIES_PAGE_LIMIT));
-      if (filters.date) params.set("date", filters.date);
-      if (filters.month) params.set("month", filters.month);
-      if (filters.driver) params.set("driver", filters.driver);
-      if (filters.vehicle) params.set("vehicle", filters.vehicle);
-      if (filters.customer) params.set("customer", filters.customer);
-      if (filters.paymentStatus) params.set("paymentStatus", filters.paymentStatus);
-      if (filters.days) params.set("days", String(filters.days));
 
       const res = await fetch(`/api/admin/supplies?${params.toString()}`, {
         cache: "no-store",
@@ -308,15 +341,9 @@ export function useAdminCashCredits(
     enabled: options?.enabled ?? true,
     placeholderData: keepPreviousData,
     queryFn: async () => {
-      const params = new URLSearchParams();
-      params.set("logType", "cash");
+      const params = supplyFilterParams("cash", filters);
       params.set("page", String(page));
       params.set("limit", String(SUPPLIES_PAGE_LIMIT));
-      if (filters.date) params.set("date", filters.date);
-      if (filters.month) params.set("month", filters.month);
-      if (filters.driver) params.set("driver", filters.driver);
-      if (filters.vehicle) params.set("vehicle", filters.vehicle);
-      if (filters.days) params.set("days", String(filters.days));
 
       const res = await fetch(`/api/admin/supplies?${params.toString()}`, {
         cache: "no-store",

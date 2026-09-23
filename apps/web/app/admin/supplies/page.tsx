@@ -3,8 +3,32 @@
 /* eslint-disable @next/next/no-img-element */
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { toCsv, type CsvValue } from "../../../lib/csv";
+import {
+  googleClientId,
+  loadGoogleIdentity,
+  requestDriveToken,
+  saveCsvAsGoogleSheet,
+} from "../../../lib/googleDrive";
 import { cloudinaryAuto, cloudinaryThumb } from "../../../lib/imageUrl";
 import {
+  CASE_SIZES,
+  casePricePreview,
+  casesBySizeText,
+  deliveredQuantity,
+  emptyCasesBySize,
+  isCaseSize,
+  parseOptionalNumber,
+  productLabel,
+  toProductType,
+  validateDeliveryQuantities,
+  type CaseSize,
+  type DeliveryQuantities,
+  type ProductType,
+} from "../../../lib/supplyProduct";
+import ProductPill from "../../components/ProductPill";
+import {
+  fetchAllSupplies,
   useAdminAddedSupplies,
   useAdminCashCredits,
   useAdminCustomers,
@@ -20,9 +44,14 @@ interface SupplyLog {
   pointName?: string;
   cansDelivered?: number;
   cansTakenBack?: number;
+  casesDelivered?: number;
+  caseSize?: CaseSize;
+  casePrice?: number;
   notes?: string;
   amount?: number;
   logType?: "water" | "cash";
+  // Missing on older deliveries, which count as "can".
+  productType?: ProductType;
   cashType?: "debit" | "fuel";
   paymentStatus?: "cash" | "upi" | "not_paid";
   adminRemark?: string;
@@ -54,6 +83,8 @@ type ExportRow = {
   driver: string;
   customer?: string;
   cans?: string;
+  cases?: string;
+  caseSize?: string;
   cansTakenBack?: string;
   vehicle?: string;
   amount: string;
@@ -75,6 +106,7 @@ type Filters = {
   vehicle: string;
   customer: string;
   paymentStatus: "" | "cash" | "upi" | "not_paid";
+  productType: "" | ProductType;
 };
 
 function todayInputValue() {
@@ -122,6 +154,190 @@ function maskText(value: string, max = 12) {
   return value.length > max ? `${value.slice(0, max)}...` : value;
 }
 
+// The driver's note on a log, or "" when there isn't one. Driver entries save
+// an empty note as "", so blank and whitespace-only notes count as none.
+function driverNote(log: { notes?: string }): string {
+  return log.notes?.trim() ?? "";
+}
+
+// One-line preview of a driver's note, shown in the table so it isn't missed.
+// The full text is in the tooltip and in the details dialog.
+function NotePreview({ note }: { note: string }) {
+  return (
+    <div className="supply-note" role="note" aria-label={`Driver note: ${note}`} title={note}>
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+      </svg>
+      <span aria-hidden="true">{note}</span>
+    </div>
+  );
+}
+
+// Quantities to send for a delivery form: the one quantity input holds the
+// chosen product's count; taken back only applies to cans, and bottle size and
+// price per case only to cases.
+function formQuantities(
+  productType: ProductType,
+  quantity: string,
+  takenBack: string,
+  caseSize: "" | CaseSize,
+  casePrice: string,
+): DeliveryQuantities {
+  return productType === "case"
+    ? {
+        productType: "case",
+        caseSize: caseSize || undefined,
+        casesDelivered: parseOptionalNumber(quantity),
+        casePrice: parseOptionalNumber(casePrice),
+      }
+    : { productType: "can", cansDelivered: parseOptionalNumber(quantity), cansTakenBack: parseOptionalNumber(takenBack) };
+}
+
+// Bottle size choice for case deliveries in the add and edit dialogs. Nothing
+// is selected until the admin picks one.
+function CaseSizeRadios({
+  name,
+  value,
+  onChange,
+}: {
+  name: string;
+  value: "" | CaseSize;
+  onChange: (size: CaseSize) => void;
+}) {
+  return (
+    <div style={{ display: "flex", gap: "0.5rem 1rem", marginTop: "0.4rem", flexWrap: "wrap" }}>
+      {CASE_SIZES.map((size) => (
+        <label key={size} style={{ display: "flex", alignItems: "center", gap: "0.4rem", cursor: "pointer", fontWeight: value === size ? 700 : 500 }}>
+          <input type="radio" name={name} value={size} checked={value === size} onChange={() => onChange(size)} />
+          {size}
+        </label>
+      ))}
+    </div>
+  );
+}
+
+function CaseTotalPreview({ quantity, price }: { quantity: string; price: string }) {
+  const preview = casePricePreview(parseOptionalNumber(quantity), parseOptionalNumber(price));
+  if (!preview) return null;
+  return (
+    <div data-testid="case-total" style={{ fontSize: "0.9rem", color: "var(--text-secondary)" }}>
+      Amount: <strong style={{ color: "var(--text-primary)" }}>{preview}</strong>
+    </div>
+  );
+}
+
+// Cases per bottle size over a set of rows, for the export totals.
+function casesBySizeOf(logs: SupplyLog[]) {
+  const bySize = emptyCasesBySize();
+  for (const log of logs) {
+    if (toProductType(log.productType) === "case" && isCaseSize(log.caseSize)) {
+      bySize[log.caseSize] += log.casesDelivered ?? 0;
+    }
+  }
+  return bySize;
+}
+
+// Radio pair for choosing Can or Case in the add and edit dialogs.
+function ProductRadios({
+  name,
+  value,
+  onChange,
+}: {
+  name: string;
+  value: ProductType;
+  onChange: (productType: ProductType) => void;
+}) {
+  return (
+    <div style={{ display: "flex", gap: "1rem", marginTop: "0.4rem", flexWrap: "wrap" }}>
+      {(["can", "case"] as const).map((pt) => (
+        <label key={pt} style={{ display: "flex", alignItems: "center", gap: "0.4rem", cursor: "pointer", fontWeight: value === pt ? 700 : 500 }}>
+          <input type="radio" name={name} value={pt} checked={value === pt} onChange={() => onChange(pt)} />
+          {pt === "can" ? "Can" : "Case"}
+        </label>
+      ))}
+    </div>
+  );
+}
+
+// ── Sheet (CSV) download ──
+// Date and 24-hour time as separate columns in the viewer's local time, in a
+// form Google Sheets and Excel both read as a real date and time.
+function sheetDateTime(value: string) {
+  const d = new Date(value);
+  const pad = (n: number) => `${n}`.padStart(2, "0");
+  return {
+    date: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,
+    time: `${pad(d.getHours())}:${pad(d.getMinutes())}`,
+  };
+}
+
+function paymentLabel(ps?: SupplyLog["paymentStatus"]) {
+  return !ps || ps === "cash" ? "Cash" : ps === "upi" ? "UPI" : "Not Paid";
+}
+
+const blankToNull = (value?: string) => (value?.trim() ? value.trim() : null);
+
+// One row per delivery, then a totals row after a blank line so the data
+// block stays easy to sort and filter.
+function deliverySheetRows(logs: SupplyLog[]): CsvValue[][] {
+  const header = [
+    "No.", "Date", "Time", "Driver", "Customer", "Area", "Product",
+    "Cans Delivered", "Cases Delivered", "Case Size", "Price per Case (₹)", "Cans Taken Back", "Amount (₹)",
+    "Payment", "Vehicle", "Driver Note", "Admin Remark",
+  ];
+  const totals = { cans: 0, cases: 0, takenBack: 0, amount: 0 };
+  const rows = logs.map<CsvValue[]>((log, index) => {
+    const { date, time } = sheetDateTime(log.suppliedAt);
+    totals.cans += log.cansDelivered ?? 0;
+    totals.cases += log.casesDelivered ?? 0;
+    totals.takenBack += log.cansTakenBack ?? 0;
+    totals.amount += log.amount ?? 0;
+    const isCase = toProductType(log.productType) === "case";
+    return [
+      index + 1, date, time,
+      log.driver?.name,
+      log.customer?.name ?? log.pointName,
+      log.customer?.area,
+      productLabel(toProductType(log.productType)),
+      log.cansDelivered, log.casesDelivered,
+      isCase ? log.caseSize : null, isCase ? log.casePrice : null,
+      log.cansTakenBack, log.amount,
+      paymentLabel(log.paymentStatus),
+      log.vehicle ? [log.vehicle.name, log.vehicle.vehicleNumber].filter(Boolean).join(" - ") : null,
+      blankToNull(log.notes),
+      blankToNull(log.adminRemark),
+    ];
+  });
+  const totalRow: CsvValue[] = ["Total", null, null, null, null, null, null, totals.cans, totals.cases, null, null, totals.takenBack, totals.amount];
+  // Then cases per bottle size, with the count in the Cases Delivered column.
+  const bySize = casesBySizeOf(logs);
+  const sizeRows: CsvValue[][] = CASE_SIZES.filter((size) => bySize[size] > 0).map((size) => [
+    `Cases ${size}`, null, null, null, null, null, null, null, bySize[size],
+  ]);
+  const unsized = totals.cases - CASE_SIZES.reduce((sum, size) => sum + bySize[size], 0);
+  if (unsized > 0) sizeRows.push(["Cases size not set", null, null, null, null, null, null, null, unsized]);
+  return [header, ...rows, [], totalRow, ...sizeRows];
+}
+
+function cashSheetRows(logs: SupplyLog[]): CsvValue[][] {
+  const header = ["No.", "Date", "Time", "Driver", "Type", "Amount (₹)", "Driver Remark", "Admin Remark", "Bill Image"];
+  let totalAmount = 0;
+  const rows = logs.map<CsvValue[]>((log, index) => {
+    const { date, time } = sheetDateTime(log.suppliedAt);
+    totalAmount += log.amount ?? 0;
+    return [
+      index + 1, date, time,
+      log.driver?.name,
+      log.cashType === "fuel" ? "Fuel" : log.cashType === "debit" ? "Debit" : null,
+      log.amount,
+      blankToNull(log.notes),
+      blankToNull(log.adminRemark),
+      log.billImageUrl,
+    ];
+  });
+  return [header, ...rows, [], ["Total", null, null, null, null, totalAmount]];
+}
+
 // Driver-entered text (names, notes, remarks) goes into the print window's
 // raw HTML — escape it so it can never run as markup there.
 function escapeHtml(value: string | number) {
@@ -148,6 +364,7 @@ export default function SuppliesPage() {
     vehicle: "",
     customer: "",
     paymentStatus: "",
+    productType: "",
   });
   const [error, setError] = useState("");
   const [selectedLog, setSelectedLog] = useState<SupplyLog | null>(null);
@@ -159,8 +376,14 @@ export default function SuppliesPage() {
   const [editingDriverRemark, setEditingDriverRemark] = useState("");
   const [editingCansDelivered, setEditingCansDelivered] = useState("");
   const [editingCansTakenBack, setEditingCansTakenBack] = useState("");
+  const [editingProductType, setEditingProductType] = useState<ProductType>("can");
+  const [editingCaseSize, setEditingCaseSize] = useState<"" | CaseSize>("");
+  const [editingCasePrice, setEditingCasePrice] = useState("");
   const [editingPaymentStatus, setEditingPaymentStatus] = useState<"cash" | "upi" | "not_paid">("cash");
   const [editSaving, setEditSaving] = useState(false);
+  const [sheetDownloading, setSheetDownloading] = useState(false);
+  const [driveSaving, setDriveSaving] = useState(false);
+  const [driveSheetLink, setDriveSheetLink] = useState<string | null>(null);
   const [deleteSaving, setDeleteSaving] = useState(false);
   const [confirmDeleteLog, setConfirmDeleteLog] = useState<SupplyLog | null>(null);
 
@@ -169,8 +392,12 @@ export default function SuppliesPage() {
     driverId: "",
     customerId: "",
     suppliedAt: todayInputValue(),
+    productType: "can" as ProductType,
+    // Quantity of the chosen product (cans or cases).
     cansDelivered: "",
     cansTakenBack: "",
+    caseSize: "" as "" | CaseSize,
+    casePrice: "",
     amount: "",
     notes: "",
   });
@@ -181,7 +408,9 @@ export default function SuppliesPage() {
   const { data: customerOptions } = useAdminCustomers();
 
   // With no filters, page 1 is the last RECENT_DAYS days and Next/Prev walk
-  // older records. Any filter switches to normal unlimited pagination.
+  // older records. Any filter switches to normal unlimited pagination. The
+  // product filter is left out: it narrows within the same window, so the
+  // Cans and Cases totals add up to the unfiltered ones.
   const hasAnyFilter = Boolean(
     filters.date || filters.month || filters.driver || filters.vehicle || filters.customer || filters.paymentStatus,
   );
@@ -277,13 +506,18 @@ export default function SuppliesPage() {
       uniqueCustomers: s?.uniqueCustomers ?? 0,
       totalCans: s?.totalCans ?? 0,
       totalCansTakenBack: s?.totalCansTakenBack ?? 0,
+      totalCases: s?.totalCases ?? 0,
+      casesBySizeText: casesBySizeText(s?.casesBySize, s?.totalCases ?? 0),
       totalAmount: s?.totalAmount ?? 0,
     };
   }, [activeData]);
 
+  function exportDatePart() {
+    return filters.date || filters.month || new Date().toISOString().slice(0, 10);
+  }
+
   function exportFilenameBase() {
-    const datePart = filters.date || filters.month || new Date().toISOString().slice(0, 10);
-    return supplyTab === "water" ? `water-supplies-${datePart}` : `cash-credits-${datePart}`;
+    return supplyTab === "water" ? `water-supplies-${exportDatePart()}` : `cash-credits-${exportDatePart()}`;
   }
 
   function exportRows() {
@@ -293,6 +527,8 @@ export default function SuppliesPage() {
       driver: `${log.driver?.name ?? ""} (@${log.driver?.username ?? ""})`,
       customer: log.customer?.name ?? log.pointName ?? "-",
       cans: log.cansDelivered !== undefined ? String(log.cansDelivered) : "-",
+      cases: log.casesDelivered !== undefined ? String(log.casesDelivered) : "-",
+      caseSize: toProductType(log.productType) === "case" && log.caseSize ? log.caseSize : "-",
       cansTakenBack: log.cansTakenBack !== undefined ? String(log.cansTakenBack) : "-",
       vehicle: `${log.vehicle?.name ?? ""} - ${log.vehicle?.vehicleNumber ?? ""}`,
       amount: log.amount !== undefined ? String(log.amount) : "-",
@@ -307,11 +543,17 @@ export default function SuppliesPage() {
       (acc, log) => {
         acc.amount += log.amount ?? 0;
         acc.cans += log.cansDelivered ?? 0;
+        acc.cases += log.casesDelivered ?? 0;
         acc.takenBack += log.cansTakenBack ?? 0;
         return acc;
       },
-      { amount: 0, cans: 0, takenBack: 0 },
+      { amount: 0, cans: 0, cases: 0, takenBack: 0 },
     );
+  }
+
+  // "500ml 4 · 1L 5" for the rows being exported.
+  function exportCasesText(totalCases: number) {
+    return casesBySizeText(casesBySizeOf(effectiveLogs), totalCases);
   }
 
   function triggerDownload(filename: string, blob: Blob) {
@@ -331,6 +573,7 @@ export default function SuppliesPage() {
     const reportWindow = window.open("", "_blank", "width=1200,height=800");
     if (!reportWindow) return null;
     const isCashTab = supplyTab === "cash";
+    const casesText = isCashTab ? "" : exportCasesText(totals.cases);
     const reportTitle = isCashTab ? "Cash Credits" : "Water Supplies";
     const headerRow = isCashTab
       ? `<tr>
@@ -348,6 +591,8 @@ export default function SuppliesPage() {
           <th>Driver</th>
           <th>Customer</th>
           <th>Cans Del.</th>
+          <th>Cases Del.</th>
+          <th>Case Size</th>
           <th>Taken Back</th>
           <th>Amount</th>
           <th>Admin Remark</th>
@@ -370,6 +615,8 @@ export default function SuppliesPage() {
           <td>${escapeHtml(r.driver)}</td>
           <td>${escapeHtml(r.customer ?? "-")}</td>
           <td>${escapeHtml(r.cans ?? "-")}</td>
+          <td>${escapeHtml(r.cases ?? "-")}</td>
+          <td>${escapeHtml(r.caseSize ?? "-")}</td>
           <td>${escapeHtml(r.cansTakenBack ?? "-")}</td>
           <td>${escapeHtml(r.amount)}</td>
           <td>${escapeHtml(r.remark)}</td>
@@ -385,6 +632,8 @@ export default function SuppliesPage() {
       : `<tr>
           <td colspan="4">Total</td>
           <td>${totals.cans}</td>
+          <td>${totals.cases}</td>
+          <td></td>
           <td>${totals.takenBack}</td>
           <td>${totals.amount.toLocaleString("en-IN")}</td>
           <td></td>
@@ -405,7 +654,7 @@ export default function SuppliesPage() {
         </head>
         <body>
           <h1>${reportTitle}</h1>
-          <div class="meta">Generated: ${formatDateTime(new Date())} | Total Rows: ${rows.length} | <span style="font-weight:700;">Total Amount: ${totals.amount.toLocaleString("en-IN")}</span></div>
+          <div class="meta">Generated: ${formatDateTime(new Date())} | Total Rows: ${rows.length} | <span style="font-weight:700;">Total Amount: ${totals.amount.toLocaleString("en-IN")}</span>${casesText ? ` | Cases: ${escapeHtml(casesText)}` : ""}</div>
           <table>
             <thead>
               ${headerRow}
@@ -433,6 +682,7 @@ export default function SuppliesPage() {
     const rows = exportRows().slice(0, MAX_EXPORT_ROWS);
     const totals = exportTotals();
     const isCashTab = supplyTab === "cash";
+    const casesText = isCashTab ? "" : exportCasesText(totals.cases);
     const reportTitle = isCashTab ? "Cash Credits" : "Water Supplies";
     const columns: ExportColumn[] = isCashTab
       ? [
@@ -450,6 +700,8 @@ export default function SuppliesPage() {
           { key: "driver", title: "Driver", width: 260 },
           { key: "customer", title: "Customer", width: 220 },
           { key: "cans", title: "Cans Del.", width: 80 },
+          { key: "cases", title: "Cases Del.", width: 80 },
+          { key: "caseSize", title: "Case Size", width: 80 },
           { key: "cansTakenBack", title: "Taken Back", width: 90 },
           { key: "amount", title: "Amount", width: 110 },
           { key: "remark", title: "Admin Remark", width: 240 },
@@ -517,7 +769,11 @@ export default function SuppliesPage() {
     ctx.fillStyle = "#334155";
     ctx.fillText(`Generated: ${formatDateTime(new Date())}`, outerPadding, outerPadding + 48);
     ctx.font = "700 14px Arial";
-    ctx.fillText(`Total Amount: ${totals.amount.toLocaleString("en-IN")}`, outerPadding, outerPadding + 68);
+    ctx.fillText(
+      `Total Amount: ${totals.amount.toLocaleString("en-IN")}${casesText ? `   ·   Cases: ${casesText}` : ""}`,
+      outerPadding,
+      outerPadding + 68,
+    );
 
     const tableX = outerPadding;
     let y = outerPadding + titleHeight;
@@ -571,6 +827,7 @@ export default function SuppliesPage() {
       : {
           no: "Total",
           cans: String(totals.cans),
+          cases: String(totals.cases),
           cansTakenBack: String(totals.takenBack),
           amount: totals.amount.toLocaleString("en-IN"),
         };
@@ -593,12 +850,61 @@ export default function SuppliesPage() {
     }, "image/png");
   }
 
+  // Unlike Photo and PDF (the rows on screen), the sheet holds every entry
+  // matching the filters, so it matches the summary totals. With no filters
+  // that is the last RECENT_DAYS days.
+  async function handleDownloadSheet() {
+    setSheetDownloading(true);
+    setError("");
+    try {
+      const logs = await fetchAllSupplies(supplyTab, queryFilters);
+      const csv = toCsv(supplyTab === "water" ? deliverySheetRows(logs) : cashSheetRows(logs));
+      triggerDownload(`${exportFilenameBase()}.csv`, new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    } catch {
+      setError("Couldn't prepare the sheet. Please try again.");
+    } finally {
+      setSheetDownloading(false);
+    }
+  }
+
+  // Preload Google's sign-in script so the popup opens straight from the click.
+  useEffect(() => {
+    if (googleClientId) void loadGoogleIdentity().catch(() => undefined);
+  }, []);
+
+  // Same rows as Download Sheet, saved into the admin's Google Drive as a
+  // Google Sheet.
+  async function handleSaveToDrive() {
+    setError("");
+    setDriveSheetLink(null);
+    if (!googleClientId) {
+      setError("Saving to Google Drive isn't set up yet: add NEXT_PUBLIC_GOOGLE_CLIENT_ID (see the README).");
+      return;
+    }
+    setDriveSaving(true);
+    try {
+      await loadGoogleIdentity();
+      const token = await requestDriveToken();
+      const logs = await fetchAllSupplies(supplyTab, queryFilters);
+      const csv = toCsv(supplyTab === "water" ? deliverySheetRows(logs) : cashSheetRows(logs), { bom: false });
+      const now = new Date();
+      const savedAt = `${`${now.getHours()}`.padStart(2, "0")}:${`${now.getMinutes()}`.padStart(2, "0")}`;
+      const title = `Royal King ${supplyTab === "water" ? "Water Supplies" : "Cash Credits"} ${exportDatePart()} (saved ${savedAt})`;
+      const file = await saveCsvAsGoogleSheet(token, title, csv);
+      setDriveSheetLink(file.webViewLink);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't save to Google Drive. Please try again.");
+    } finally {
+      setDriveSaving(false);
+    }
+  }
+
   function handleDownloadPdf() {
     openReportWindowAndPrint();
   }
 
   function clearFilters() {
-    setFilters({ date: "", month: "", driver: "", vehicle: "", customer: "", paymentStatus: "" });
+    setFilters({ date: "", month: "", driver: "", vehicle: "", customer: "", paymentStatus: "", productType: "" });
   }
 
   function openAddForm() {
@@ -606,8 +912,11 @@ export default function SuppliesPage() {
       driverId: "",
       customerId: "",
       suppliedAt: todayInputValue(),
+      productType: "can",
       cansDelivered: "",
       cansTakenBack: "",
+      caseSize: "",
+      casePrice: "",
       amount: "",
       notes: "",
     });
@@ -620,8 +929,10 @@ export default function SuppliesPage() {
     if (!addData.driverId) { setAddError("Please select a driver."); return; }
     if (!addData.customerId) { setAddError("Please select a customer."); return; }
     if (!addData.suppliedAt) { setAddError("Please enter a delivery date."); return; }
-    if (!addData.cansDelivered && !addData.cansTakenBack) {
-      setAddError("Enter cans delivered, cans taken back, or both.");
+    const quantities = formQuantities(addData.productType, addData.cansDelivered, addData.cansTakenBack, addData.caseSize, addData.casePrice);
+    const quantityError = validateDeliveryQuantities(quantities);
+    if (quantityError) {
+      setAddError(quantityError);
       return;
     }
     setAddSubmitting(true);
@@ -634,9 +945,9 @@ export default function SuppliesPage() {
           driverId: addData.driverId,
           customerId: addData.customerId,
           suppliedAt: addData.suppliedAt,
-          cansDelivered: addData.cansDelivered !== "" ? Number(addData.cansDelivered) : undefined,
-          cansTakenBack: addData.cansTakenBack !== "" ? Number(addData.cansTakenBack) : undefined,
-          amount: addData.amount !== "" ? Number(addData.amount) : undefined,
+          ...quantities,
+          // Cases are priced from the price per case; the override is for cans.
+          amount: addData.productType === "can" && addData.amount !== "" ? Number(addData.amount) : undefined,
           notes: addData.notes || undefined,
         }),
       });
@@ -659,8 +970,12 @@ export default function SuppliesPage() {
     setEditingRemark(log.adminRemark ?? "");
     setEditingCashType(log.cashType === "fuel" ? "fuel" : "debit");
     setEditingDriverRemark(log.notes ?? "");
-    setEditingCansDelivered(log.cansDelivered !== undefined ? String(log.cansDelivered) : "");
+    setEditingProductType(toProductType(log.productType));
+    const quantity = deliveredQuantity(log);
+    setEditingCansDelivered(quantity !== undefined ? String(quantity) : "");
     setEditingCansTakenBack(log.cansTakenBack !== undefined ? String(log.cansTakenBack) : "");
+    setEditingCaseSize(isCaseSize(log.caseSize) ? log.caseSize : "");
+    setEditingCasePrice(log.casePrice !== undefined ? String(log.casePrice) : "");
     const ps = log.paymentStatus;
     setEditingPaymentStatus(ps === "upi" || ps === "not_paid" ? ps : "cash");
     setError("");
@@ -671,6 +986,16 @@ export default function SuppliesPage() {
     if (editingLog.logType === "cash" && (!editingAmount || Number(editingAmount) < 0)) {
       setError("Please enter a valid amount.");
       return;
+    }
+    const quantities = formQuantities(editingProductType, editingCansDelivered, editingCansTakenBack, editingCaseSize, editingCasePrice);
+    if (editingLog.logType !== "cash") {
+      // Switching product needs the new quantity; a plain edit may leave it blank.
+      const switching = editingProductType !== toProductType(editingLog.productType);
+      const quantityError = validateDeliveryQuantities(quantities, { partial: !switching });
+      if (quantityError) {
+        setError(quantityError);
+        return;
+      }
     }
 
     setEditSaving(true);
@@ -687,8 +1012,8 @@ export default function SuppliesPage() {
                 notes: editingDriverRemark,
               }
             : {
-                cansDelivered: editingCansDelivered !== "" ? Number(editingCansDelivered) : undefined,
-                cansTakenBack: editingCansTakenBack !== "" ? Number(editingCansTakenBack) : undefined,
+                // Always carries productType, so older rows get it recorded on save.
+                ...quantities,
                 notes: editingDriverRemark,
                 adminRemark: editingRemark,
                 paymentStatus: editingPaymentStatus,
@@ -697,28 +1022,21 @@ export default function SuppliesPage() {
       });
       setEditSaving(false);
 
+      const data = (await res.json().catch(() => ({}))) as SupplyLog & { error?: string };
       if (!res.ok) {
-        setError("Failed to update. Please try again.");
+        setError(data.error ?? "Failed to update. Please try again.");
         return;
       }
 
-      const updated = (await res.json()) as SupplyLog;
+      const updated = data;
       const updatedWithFormatted = {
         ...updated,
         formattedSuppliedAt: updated.formattedSuppliedAt ?? formatDateTime(updated.suppliedAt),
       };
 
-      const listQueryKey =
-        editingLog.logType === "cash"
-          ? ["admin", "supplies", "cash-credits", queryFilters, cashPage]
-          : ["admin", "supplies", "added", queryFilters, waterPage];
-
-      queryClient.setQueryData<PaginatedSupplyLogsWithStats>(
-        listQueryKey,
-        (prev) => prev
-          ? { ...prev, logs: prev.logs.map((log) => log._id === updated._id ? updatedWithFormatted : log) }
-          : prev,
-      );
+      // Refetch rather than patch the row in place: quantity and product
+      // changes also move the summary totals, which come from the server.
+      void queryClient.invalidateQueries({ queryKey: ["admin", "supplies"] });
       setSelectedLog((prev) => prev && prev._id === updated._id ? updatedWithFormatted : prev);
       setEditingLog(null);
     } catch {
@@ -819,7 +1137,33 @@ export default function SuppliesPage() {
             <button type="button" className="btn btn-secondary btn-sm" onClick={handleDownloadPdf}>
               Download PDF
             </button>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={() => void handleDownloadSheet()}
+              disabled={sheetDownloading}
+              title="Spreadsheet (.csv) of every entry matching the filters. Opens in Google Sheets or Excel."
+            >
+              {sheetDownloading ? "Preparing..." : "Download Sheet"}
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={() => void handleSaveToDrive()}
+              disabled={driveSaving}
+              title="Save every entry matching the filters as a Google Sheet in your Google Drive."
+            >
+              {driveSaving ? "Saving to Drive..." : "Save to Google Drive"}
+            </button>
           </div>
+          {driveSheetLink && (
+            <div className="alert alert-success" style={{ marginTop: "0.75rem" }}>
+              Saved to your Google Drive.{" "}
+              <a href={driveSheetLink} target="_blank" rel="noopener noreferrer" style={{ fontWeight: 700, textDecoration: "underline" }}>
+                Open the sheet
+              </a>
+            </div>
+          )}
         </div>
 
       <div className="card" style={{ marginBottom: "1rem" }}>
@@ -911,6 +1255,21 @@ export default function SuppliesPage() {
               </select>
             </div>
           )}
+          {supplyTab === "water" && (
+            <div className="form-group">
+              <label className="form-label" htmlFor="filterProductType">Product</label>
+              <select
+                id="filterProductType"
+                className="form-select"
+                value={filters.productType}
+                onChange={(e) => setFilters((f) => ({ ...f, productType: e.target.value as Filters["productType"] }))}
+              >
+                <option value="">All Products</option>
+                <option value="can">Cans</option>
+                <option value="case">Cases</option>
+              </select>
+            </div>
+          )}
         </div>
 
         <div style={{ display: "flex", alignItems: "end" }}>
@@ -939,6 +1298,10 @@ export default function SuppliesPage() {
           <>
             <span><strong style={{ color: "var(--text-primary)" }}>Customers:</strong> {summary.uniqueCustomers}</span>
             <span><strong style={{ color: "var(--text-primary)" }}>Cans Del.:</strong> {summary.totalCans}</span>
+            <span>
+              <strong style={{ color: "var(--text-primary)" }}>Cases Del.:</strong> {summary.totalCases}
+              {summary.casesBySizeText && ` (${summary.casesBySizeText})`}
+            </span>
             <span><strong style={{ color: "var(--text-primary)" }}>Taken Back:</strong> {summary.totalCansTakenBack}</span>
           </>
         )}
@@ -979,14 +1342,14 @@ export default function SuppliesPage() {
                     <tr>
                       <th>S.No</th>
                       {supplyTab === "water" ? <th>Customer</th> : <th>Amount</th>}
-                      {supplyTab === "water" ? <th>Cans</th> : <th>Type</th>}
+                      {supplyTab === "water" ? <th>Qty</th> : <th>Type</th>}
                       {supplyTab === "water" && <th>Amount</th>}
                       <th>Driver</th>
                     </tr>
                   </thead>
                   <tbody>
                     {group.entries.map((log) => (
-                      <tr key={log._id}>
+                      <tr key={log._id} className={driverNote(log) ? "supply-row-noted" : undefined}>
                         <td
                           role="button"
                           tabIndex={0}
@@ -1016,6 +1379,7 @@ export default function SuppliesPage() {
                           {supplyTab === "water"
                             ? maskText(log.customer?.name ?? log.pointName ?? "-")
                             : (log.amount !== undefined ? log.amount : "-")}
+                          {driverNote(log) && <NotePreview note={driverNote(log)} />}
                         </td>
                         <td
                           role="button"
@@ -1031,7 +1395,8 @@ export default function SuppliesPage() {
                         >
                           {supplyTab === "water" ? (
                             <div>
-                              <strong>{log.cansDelivered ?? "-"}</strong>
+                              <strong>{deliveredQuantity(log) ?? "-"}</strong>
+                              <div style={{ marginTop: "0.15rem" }}><ProductPill productType={log.productType} caseSize={log.caseSize} size="sm" /></div>
                               {log.cansTakenBack !== undefined && (
                                 <div style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>↩ {log.cansTakenBack}</div>
                               )}
@@ -1201,46 +1566,82 @@ export default function SuppliesPage() {
               </div>
 
               <div className="form-group">
-                <label className="form-label" htmlFor="addCansDelivered">Cans Delivered</label>
+                <label className="form-label">Product *</label>
+                <ProductRadios
+                  name="addProductType"
+                  value={addData.productType}
+                  onChange={(pt) => setAddData((d) => ({ ...d, productType: pt, cansDelivered: "", cansTakenBack: "", caseSize: "", casePrice: "", amount: "" }))}
+                />
+              </div>
+
+              {addData.productType === "case" && (
+                <div className="form-group">
+                  <label className="form-label">Bottle Size *</label>
+                  <CaseSizeRadios name="addCaseSize" value={addData.caseSize} onChange={(size) => setAddData((d) => ({ ...d, caseSize: size }))} />
+                </div>
+              )}
+
+              <div className="form-group">
+                <label className="form-label" htmlFor="addCansDelivered">{addData.productType === "case" ? "Cases Delivered" : "Cans Delivered"}</label>
                 <input
                   id="addCansDelivered"
                   className="form-input"
                   type="number"
-                  min="0"
+                  min={addData.productType === "case" ? "1" : "0"}
                   step="1"
-                  placeholder="e.g. 2"
+                  placeholder={addData.productType === "case" ? "e.g. 1" : "e.g. 2"}
                   value={addData.cansDelivered}
                   onChange={(e) => setAddData((d) => ({ ...d, cansDelivered: e.target.value }))}
                 />
               </div>
 
-              <div className="form-group">
-                <label className="form-label" htmlFor="addCansTakenBack">Cans Taken Back</label>
-                <input
-                  id="addCansTakenBack"
-                  className="form-input"
-                  type="number"
-                  min="0"
-                  step="1"
-                  placeholder="e.g. 0"
-                  value={addData.cansTakenBack}
-                  onChange={(e) => setAddData((d) => ({ ...d, cansTakenBack: e.target.value }))}
-                />
-              </div>
+              {addData.productType === "can" && (
+                <div className="form-group">
+                  <label className="form-label" htmlFor="addCansTakenBack">Cans Taken Back</label>
+                  <input
+                    id="addCansTakenBack"
+                    className="form-input"
+                    type="number"
+                    min="0"
+                    step="1"
+                    placeholder="e.g. 0"
+                    value={addData.cansTakenBack}
+                    onChange={(e) => setAddData((d) => ({ ...d, cansTakenBack: e.target.value }))}
+                  />
+                </div>
+              )}
 
-              <div className="form-group">
-                <label className="form-label" htmlFor="addAmount">Amount (₹) — auto-calculated if blank</label>
-                <input
-                  id="addAmount"
-                  className="form-input"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  placeholder="Leave blank to auto-calculate"
-                  value={addData.amount}
-                  onChange={(e) => setAddData((d) => ({ ...d, amount: e.target.value }))}
-                />
-              </div>
+              {addData.productType === "case" ? (
+                <div className="form-group">
+                  <label className="form-label" htmlFor="addCasePrice">Price per Case (₹) *</label>
+                  <input
+                    id="addCasePrice"
+                    className="form-input"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    inputMode="decimal"
+                    placeholder="e.g. 120"
+                    value={addData.casePrice}
+                    onChange={(e) => setAddData((d) => ({ ...d, casePrice: e.target.value }))}
+                  />
+                  <CaseTotalPreview quantity={addData.cansDelivered} price={addData.casePrice} />
+                </div>
+              ) : (
+                <div className="form-group">
+                  <label className="form-label" htmlFor="addAmount">Amount (₹) — auto-calculated if blank</label>
+                  <input
+                    id="addAmount"
+                    className="form-input"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    placeholder="Leave blank to auto-calculate"
+                    value={addData.amount}
+                    onChange={(e) => setAddData((d) => ({ ...d, amount: e.target.value }))}
+                  />
+                </div>
+              )}
 
               <div className="form-group">
                 <label className="form-label" htmlFor="addNotes">Notes (Optional)</label>
@@ -1323,10 +1724,24 @@ export default function SuppliesPage() {
                   )}
                 </div>
               )}
-              {selectedLog.cansDelivered !== undefined && (
+              {selectedLog.logType !== "cash" && (
                 <div>
-                  <div className="text-sm text-muted">Cans Delivered</div>
-                  <div style={{ fontWeight: 700, fontSize: "1.1rem" }}>{selectedLog.cansDelivered}</div>
+                  <div className="text-sm text-muted">Product</div>
+                  <ProductPill productType={selectedLog.productType} caseSize={selectedLog.caseSize} />
+                </div>
+              )}
+              {deliveredQuantity(selectedLog) !== undefined && (
+                <div>
+                  <div className="text-sm text-muted">
+                    {toProductType(selectedLog.productType) === "case" ? "Cases Delivered" : "Cans Delivered"}
+                  </div>
+                  <div style={{ fontWeight: 700, fontSize: "1.1rem" }}>{deliveredQuantity(selectedLog)}</div>
+                </div>
+              )}
+              {toProductType(selectedLog.productType) === "case" && selectedLog.casePrice !== undefined && (
+                <div>
+                  <div className="text-sm text-muted">Price per Case</div>
+                  <div style={{ fontWeight: 600 }}>₹{selectedLog.casePrice}</div>
                 </div>
               )}
               {selectedLog.cansTakenBack !== undefined && (
@@ -1561,29 +1976,84 @@ export default function SuppliesPage() {
             {editingLog.logType === "water" && (
               <>
                 <div className="form-group" style={{ marginBottom: "0.75rem" }}>
-                  <label className="form-label" htmlFor="editCansDelivered">Cans Delivered</label>
+                  <label className="form-label">Product</label>
+                  <ProductRadios
+                    name="editProductType"
+                    value={editingProductType}
+                    onChange={(pt) => {
+                      setEditingProductType(pt);
+                      if (pt === toProductType(editingLog.productType)) {
+                        // Back on the saved product: restore the saved values.
+                        const quantity = deliveredQuantity(editingLog);
+                        setEditingCansDelivered(quantity !== undefined ? String(quantity) : "");
+                        setEditingCansTakenBack(editingLog.cansTakenBack !== undefined ? String(editingLog.cansTakenBack) : "");
+                        setEditingCaseSize(isCaseSize(editingLog.caseSize) ? editingLog.caseSize : "");
+                        setEditingCasePrice(editingLog.casePrice !== undefined ? String(editingLog.casePrice) : "");
+                      } else {
+                        // A count entered for one product must never be saved as the other.
+                        setEditingCansDelivered("");
+                        setEditingCansTakenBack("");
+                        setEditingCaseSize("");
+                        setEditingCasePrice("");
+                      }
+                    }}
+                  />
+                  {editingProductType !== toProductType(editingLog.productType) && (
+                    <div className="text-sm text-muted" style={{ marginTop: "0.3rem" }}>
+                      {editingProductType === "case"
+                        ? "Choose the bottle size and enter the cases and price per case. The amount will be cases × price."
+                        : "Enter the cans delivered. The amount will be recalculated at the customer's can rate (cleared if none is set)."}
+                    </div>
+                  )}
+                </div>
+                {editingProductType === "case" && (
+                  <div className="form-group" style={{ marginBottom: "0.75rem" }}>
+                    <label className="form-label">Bottle Size</label>
+                    <CaseSizeRadios name="editCaseSize" value={editingCaseSize} onChange={setEditingCaseSize} />
+                  </div>
+                )}
+                <div className="form-group" style={{ marginBottom: "0.75rem" }}>
+                  <label className="form-label" htmlFor="editCansDelivered">{editingProductType === "case" ? "Cases Delivered" : "Cans Delivered"}</label>
                   <input
                     id="editCansDelivered"
                     className="form-input"
                     type="number"
-                    min="0"
+                    min={editingProductType === "case" ? "1" : "0"}
                     step="1"
                     value={editingCansDelivered}
                     onChange={(e) => setEditingCansDelivered(e.target.value)}
                   />
                 </div>
-                <div className="form-group" style={{ marginBottom: "0.75rem" }}>
-                  <label className="form-label" htmlFor="editCansTakenBack">Cans Taken Back</label>
-                  <input
-                    id="editCansTakenBack"
-                    className="form-input"
-                    type="number"
-                    min="0"
-                    step="1"
-                    value={editingCansTakenBack}
-                    onChange={(e) => setEditingCansTakenBack(e.target.value)}
-                  />
-                </div>
+                {editingProductType === "case" && (
+                  <div className="form-group" style={{ marginBottom: "0.75rem" }}>
+                    <label className="form-label" htmlFor="editCasePrice">Price per Case (₹)</label>
+                    <input
+                      id="editCasePrice"
+                      className="form-input"
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      inputMode="decimal"
+                      value={editingCasePrice}
+                      onChange={(e) => setEditingCasePrice(e.target.value)}
+                    />
+                    <CaseTotalPreview quantity={editingCansDelivered} price={editingCasePrice} />
+                  </div>
+                )}
+                {editingProductType === "can" && (
+                  <div className="form-group" style={{ marginBottom: "0.75rem" }}>
+                    <label className="form-label" htmlFor="editCansTakenBack">Cans Taken Back</label>
+                    <input
+                      id="editCansTakenBack"
+                      className="form-input"
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={editingCansTakenBack}
+                      onChange={(e) => setEditingCansTakenBack(e.target.value)}
+                    />
+                  </div>
+                )}
                 <div className="form-group" style={{ marginBottom: "0.75rem" }}>
                   <label className="form-label">Payment Status</label>
                   <div style={{ display: "flex", gap: "1rem", marginTop: "0.4rem", flexWrap: "wrap" }}>
@@ -1664,6 +2134,8 @@ export default function SuppliesPage() {
                 </div>
               </>
             )}
+
+            {error && <div className="alert alert-error" style={{ marginBottom: "0.75rem" }}>{error}</div>}
 
             <button type="button" className="btn btn-primary" disabled={editSaving} onClick={() => void saveEdit()}>
               {editSaving ? "Saving..." : "Save"}

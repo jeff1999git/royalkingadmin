@@ -4,6 +4,18 @@
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { cloudinaryAuto, cloudinaryThumb } from "../../lib/imageUrl";
+import {
+  CASE_SIZES,
+  casePricePreview,
+  deliveredQuantity,
+  parseOptionalNumber,
+  toProductType,
+  unitWord,
+  validateDeliveryQuantities,
+  type CaseSize,
+  type DeliveryQuantities,
+  type ProductType,
+} from "../../lib/supplyProduct";
 
 interface Vehicle {
   _id: string;
@@ -38,9 +50,13 @@ interface DeliveryLog {
   pointName?: string;
   cansDelivered?: number;
   cansTakenBack?: number;
+  casesDelivered?: number;
+  caseSize?: CaseSize;
+  casePrice?: number;
   notes?: string;
   amount?: number;
   logType?: "water" | "cash";
+  productType?: ProductType;
   cashType?: "debit" | "fuel";
   paymentStatus?: "cash" | "upi" | "not_paid";
   billImageUrl?: string;
@@ -194,8 +210,20 @@ function normalizeLogs(data: DeliveryLog[] | undefined): DeliveryLog[] {
   return (data ?? []).map((log) => ({
     ...log,
     logType: log.logType === "cash" ? "cash" : "water",
+    // Deliveries saved before the can/case choice existed are cans.
+    productType: toProductType(log.productType),
     formattedSuppliedAt: log.formattedSuppliedAt ?? formatDateTime(log.suppliedAt),
   }));
+}
+
+// "2 cans" / "1 case", or null when the row has no delivered quantity.
+// "2 cans", "3 cases · 500ml", or null when the row has no delivered quantity.
+function deliveredText(log: DeliveryLog): string | null {
+  const quantity = deliveredQuantity(log);
+  if (quantity === undefined) return null;
+  const productType = toProductType(log.productType);
+  const text = `${quantity} ${unitWord(productType, quantity)}`;
+  return productType === "case" && log.caseSize ? `${text} · ${log.caseSize}` : text;
 }
 
 function buildGroupedLogs(source: DeliveryLog[]): GroupedLogs[] {
@@ -239,8 +267,13 @@ export default function DriverDashboard() {
   // Delivery form
   const [deliveryForm, setDeliveryForm] = useState({
     deliveryKey: "",
+    productType: "can" as ProductType,
+    // Quantity of the chosen product (cans or cases).
     cansDelivered: "",
     cansTakenBack: "",
+    // Case deliveries only; the driver must pick a size and type the price.
+    caseSize: "" as "" | CaseSize,
+    casePrice: "",
     vehicleId: "",
     notes: "",
     paymentStatus: "cash" as "cash" | "upi" | "not_paid",
@@ -402,6 +435,10 @@ export default function DriverDashboard() {
     () => deliveryOptions.find((o) => o.key === deliveryForm.deliveryKey) ?? null,
     [deliveryOptions, deliveryForm.deliveryKey],
   );
+  const isCaseDelivery = deliveryForm.productType === "case";
+  const caseTotalPreview = isCaseDelivery
+    ? casePricePreview(parseOptionalNumber(deliveryForm.cansDelivered), parseOptionalNumber(deliveryForm.casePrice))
+    : null;
 
   const maxSelectableDateValue = toDateInputValue(new Date(Date.now() - 3 * 24 * 60 * 60 * 1000));
 
@@ -505,8 +542,18 @@ export default function DriverDashboard() {
       return;
     }
 
-    if (deliveryForm.cansDelivered === "" && deliveryForm.cansTakenBack === "") {
-      setError("Enter cans delivered, cans taken back, or both.");
+    const quantity = parseOptionalNumber(deliveryForm.cansDelivered);
+    const quantities: DeliveryQuantities = deliveryForm.productType === "case"
+      ? {
+          productType: "case",
+          caseSize: deliveryForm.caseSize || undefined,
+          casesDelivered: quantity,
+          casePrice: parseOptionalNumber(deliveryForm.casePrice),
+        }
+      : { productType: "can", cansDelivered: quantity, cansTakenBack: parseOptionalNumber(deliveryForm.cansTakenBack) };
+    const quantityError = validateDeliveryQuantities(quantities);
+    if (quantityError) {
+      setError(quantityError);
       setSubmitting(false);
       return;
     }
@@ -519,8 +566,7 @@ export default function DriverDashboard() {
         body: JSON.stringify({
           logType: "water",
           customerId: selectedOpt.customerId,
-          cansDelivered: deliveryForm.cansDelivered !== "" ? Number(deliveryForm.cansDelivered) : undefined,
-          cansTakenBack: deliveryForm.cansTakenBack !== "" ? Number(deliveryForm.cansTakenBack) : undefined,
+          ...quantities,
           vehicleId: deliveryForm.vehicleId || undefined,
           notes: deliveryForm.notes,
           paymentStatus: deliveryForm.paymentStatus,
@@ -542,7 +588,7 @@ export default function DriverDashboard() {
     }
 
     setSuccess("Delivery logged successfully.");
-    setDeliveryForm({ deliveryKey: "", cansDelivered: "", cansTakenBack: "", vehicleId: assignedVehicleId, notes: "", paymentStatus: "cash" });
+    setDeliveryForm({ deliveryKey: "", productType: "can", cansDelivered: "", cansTakenBack: "", caseSize: "", casePrice: "", vehicleId: assignedVehicleId, notes: "", paymentStatus: "cash" });
     setCustomerSearch("");
     // Fire-and-forget so the form frees up immediately; the list refreshes in the background.
     void queryClient.invalidateQueries({ queryKey: ["driver", "supplies"] });
@@ -776,38 +822,97 @@ export default function DriverDashboard() {
                   {selectedDeliveryOption && (
                     <div style={{ fontSize: "0.8rem", color: "var(--text-secondary)", marginTop: "0.3rem", display: "flex", gap: "1rem", flexWrap: "wrap" }}>
                       <span>Subscription: {selectedDeliveryOption.subscriptionCans} can{selectedDeliveryOption.subscriptionCans !== 1 ? "s" : ""}/day</span>
-                      {selectedDeliveryOption.cashPerCan !== undefined && (
+                      {!isCaseDelivery && selectedDeliveryOption.cashPerCan !== undefined && (
                         <span>Rate: ₹{selectedDeliveryOption.cashPerCan}/can</span>
                       )}
                     </div>
                   )}
                 </div>
+                <div className="form-group" style={{ gridColumn: "1 / -1" }}>
+                  <label className="form-label">Product *</label>
+                  <div style={{ display: "flex", gap: "1rem", marginTop: "0.4rem", flexWrap: "wrap" }}>
+                    {(["can", "case"] as const).map((pt) => (
+                      <label key={pt} style={{ display: "flex", alignItems: "center", gap: "0.4rem", cursor: "pointer", fontWeight: deliveryForm.productType === pt ? 700 : 500, padding: "0.35rem 0.5rem", minHeight: "44px" }}>
+                        <input
+                          type="radio"
+                          name="productType"
+                          value={pt}
+                          checked={deliveryForm.productType === pt}
+                          // Clear the quantities so a count typed for one product is never saved as the other.
+                          onChange={() => setDeliveryForm((f) => ({ ...f, productType: pt, cansDelivered: "", cansTakenBack: "", caseSize: "", casePrice: "" }))}
+                        />
+                        {pt === "can" ? "Can" : "Case"}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+                {isCaseDelivery && (
+                  <div className="form-group" style={{ gridColumn: "1 / -1" }}>
+                    <label className="form-label">Bottle Size *</label>
+                    <div style={{ display: "flex", gap: "0.5rem 1rem", marginTop: "0.4rem", flexWrap: "wrap" }}>
+                      {CASE_SIZES.map((size) => (
+                        <label key={size} style={{ display: "flex", alignItems: "center", gap: "0.4rem", cursor: "pointer", fontWeight: deliveryForm.caseSize === size ? 700 : 500, padding: "0.35rem 0.5rem", minHeight: "44px" }}>
+                          <input
+                            type="radio"
+                            name="caseSize"
+                            value={size}
+                            checked={deliveryForm.caseSize === size}
+                            onChange={() => setDeliveryForm((f) => ({ ...f, caseSize: size }))}
+                          />
+                          {size}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 <div className="form-group">
-                  <label className="form-label" htmlFor="cansDelivered">Cans Delivered *</label>
+                  <label className="form-label" htmlFor="cansDelivered">{isCaseDelivery ? "Cases Delivered *" : "Cans Delivered *"}</label>
                   <input
                     id="cansDelivered"
                     className="form-input"
                     type="number"
-                    min="0"
+                    min={isCaseDelivery ? "1" : "0"}
                     step="1"
                     value={deliveryForm.cansDelivered}
                     onChange={(e) => setDeliveryForm((f) => ({ ...f, cansDelivered: e.target.value }))}
-                    placeholder="e.g. 2"
+                    placeholder={isCaseDelivery ? "e.g. 1" : "e.g. 2"}
                   />
                 </div>
-                <div className="form-group">
-                  <label className="form-label" htmlFor="cansTakenBack">Cans Taken Back</label>
-                  <input
-                    id="cansTakenBack"
-                    className="form-input"
-                    type="number"
-                    min="0"
-                    step="1"
-                    value={deliveryForm.cansTakenBack}
-                    onChange={(e) => setDeliveryForm((f) => ({ ...f, cansTakenBack: e.target.value }))}
-                    placeholder="e.g. 1"
-                  />
-                </div>
+                {isCaseDelivery ? (
+                  <div className="form-group">
+                    <label className="form-label" htmlFor="casePrice">Price per Case (₹) *</label>
+                    <input
+                      id="casePrice"
+                      className="form-input"
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      inputMode="decimal"
+                      value={deliveryForm.casePrice}
+                      onChange={(e) => setDeliveryForm((f) => ({ ...f, casePrice: e.target.value }))}
+                      placeholder="e.g. 120"
+                    />
+                  </div>
+                ) : (
+                  <div className="form-group">
+                    <label className="form-label" htmlFor="cansTakenBack">Cans Taken Back</label>
+                    <input
+                      id="cansTakenBack"
+                      className="form-input"
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={deliveryForm.cansTakenBack}
+                      onChange={(e) => setDeliveryForm((f) => ({ ...f, cansTakenBack: e.target.value }))}
+                      placeholder="e.g. 1"
+                    />
+                  </div>
+                )}
+                {caseTotalPreview && (
+                  <div data-testid="case-total" style={{ gridColumn: "1 / -1", fontSize: "0.9rem", color: "var(--text-secondary)", marginTop: "-0.25rem" }}>
+                    Amount: <strong style={{ color: "var(--text-primary)" }}>{caseTotalPreview}</strong>
+                  </div>
+                )}
                 <div className="form-group">
                   <label className="form-label" htmlFor="vehicleId">Vehicle (Optional)</label>
                   <select
@@ -932,13 +1037,13 @@ export default function DriverDashboard() {
                             <div style={{ fontWeight: 700, color: "var(--text-primary)" }}>
                               {log.serialNo}. {log.customer?.name ?? log.pointName ?? "Delivery"}
                             </div>
-                            {log.cansDelivered !== undefined && (
+                            {deliveredText(log) && (
                               <div style={{
-                                background: "var(--accent-primary)", color: "#fff",
+                                background: log.productType === "case" ? "var(--warning)" : "var(--accent-primary)", color: "#fff",
                                 borderRadius: "20px", padding: "0.15rem 0.65rem",
                                 fontSize: "0.8rem", fontWeight: 700, whiteSpace: "nowrap",
                               }}>
-                                {log.cansDelivered} can{log.cansDelivered !== 1 ? "s" : ""}
+                                {deliveredText(log)}
                               </div>
                             )}
                           </div>
@@ -1393,12 +1498,18 @@ export default function DriverDashboard() {
                     )}
                   </div>
                 )}
-                {selectedLog.cansDelivered !== undefined && (
+                {deliveredText(selectedLog) && (
                   <div>
-                    <div className="text-sm text-muted">Cans Delivered</div>
+                    <div className="text-sm text-muted">{selectedLog.productType === "case" ? "Cases Delivered" : "Cans Delivered"}</div>
                     <div style={{ fontWeight: 700, fontSize: "1.15rem" }}>
-                      {selectedLog.cansDelivered} can{selectedLog.cansDelivered !== 1 ? "s" : ""}
+                      {deliveredText(selectedLog)}
                     </div>
+                  </div>
+                )}
+                {selectedLog.productType === "case" && selectedLog.casePrice !== undefined && (
+                  <div>
+                    <div className="text-sm text-muted">Price per Case</div>
+                    <div style={{ fontWeight: 600 }}>₹{selectedLog.casePrice}</div>
                   </div>
                 )}
                 {selectedLog.cansTakenBack !== undefined && (

@@ -12,7 +12,7 @@ import {
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-interface DailyDelivery { date: string; count: number; totalCans: number; }
+interface DailyDelivery { date: string; count: number; totalCans: number; totalCases: number; }
 interface DailyRegistration { date: string; count: number; }
 interface AnalyticsData { deliveries: DailyDelivery[]; registrations: DailyRegistration[]; }
 interface Driver { _id: string; name: string; username: string; }
@@ -765,10 +765,11 @@ export default function AnalyticsPage() {
   }, [vehicles, filters.vehicleId]);
 
   const totals = useMemo(() => {
-    if (!data) return { deliveries: 0, cans: 0, customers: 0 };
+    if (!data) return { deliveries: 0, cans: 0, cases: 0, customers: 0 };
     return {
       deliveries: data.deliveries.reduce((s, d) => s + d.count, 0),
       cans: data.deliveries.reduce((s, d) => s + d.totalCans, 0),
+      cases: data.deliveries.reduce((s, d) => s + d.totalCases, 0),
       customers: data.registrations.reduce((s, r) => s + r.count, 0),
     };
   }, [data]);
@@ -779,6 +780,10 @@ export default function AnalyticsPage() {
   );
   const cansChartData = useMemo(
     () => (data?.deliveries ?? []).map((d) => ({ date: d.date, value: d.totalCans })),
+    [data],
+  );
+  const casesChartData = useMemo(
+    () => (data?.deliveries ?? []).map((d) => ({ date: d.date, value: d.totalCases })),
     [data],
   );
   const registrationChartData = useMemo(
@@ -854,9 +859,9 @@ export default function AnalyticsPage() {
 
       {isError && <div className="alert alert-error" style={{ marginBottom: "1rem" }}>Failed to load analytics data.</div>}
 
-      {/* Summary stat cards — always 3 columns, responsive sizing via style tag */}
+      {/* Summary stat cards — 4 across, 2×2 on phones; responsive sizing via style tag */}
       <style dangerouslySetInnerHTML={{ __html: `
-        .stat-cards-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.6rem; margin-bottom: 1.25rem; }
+        .stat-cards-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.6rem; margin-bottom: 1.25rem; }
         .stat-card { padding: 0.85rem 1rem; }
         .stat-card-label { font-size: 0.72rem; }
         .stat-card-value { font-size: 1.75rem; }
@@ -867,6 +872,9 @@ export default function AnalyticsPage() {
         .new-customer-list > li + li { border-top: 1px solid var(--border); }
         .new-customer-row { display: flex; gap: 0.75rem; align-items: flex-start; padding: 0.75rem 0.5rem; margin: 0.15rem -0.5rem; border-radius: 8px; line-height: 1.45; }
         .new-customer-row:hover, .new-customer-row:focus-visible { background: var(--bg-card-hover); outline: none; }
+        @media (max-width: 600px) {
+          .stat-cards-row { grid-template-columns: repeat(2, 1fr); }
+        }
         @media (max-width: 400px) {
           .stat-cards-row { gap: 0.4rem; }
           .stat-card { padding: 0.65rem 0.6rem; }
@@ -878,6 +886,7 @@ export default function AnalyticsPage() {
       <div className="stat-cards-row">
         <StatCard label="Total Deliveries" value={totals.deliveries} accent="var(--accent-primary)" />
         <StatCard label="Total Cans Delivered" value={totals.cans} accent="#0ea5e9" />
+        <StatCard label="Total Cases Delivered" value={totals.cases} accent="#d97706" />
         <StatCard
           label="New Customers"
           value={totals.customers}
@@ -898,6 +907,9 @@ export default function AnalyticsPage() {
           </ChartCard>
           <ChartCard title="Cans Delivered per Day">
             <BarChart data={cansChartData} color="#0ea5e9" gradientId="grad-cans" />
+          </ChartCard>
+          <ChartCard title="Cases Delivered per Day">
+            <BarChart data={casesChartData} color="#d97706" gradientId="grad-cases" />
           </ChartCard>
           <ChartCard title="New Customer Registrations">
             <BarChart data={registrationChartData} color="#8b5cf6" gradientId="grad-registrations" />

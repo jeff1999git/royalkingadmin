@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useAdminPaginatedSupplies, useAdminTodayStats } from "../hooks/useAdminQueries";
+import { deliveredQuantity } from "../../lib/supplyProduct";
+import ProductPill from "../components/ProductPill";
 
 function todayInputValue() {
   const d = new Date();
@@ -43,7 +45,7 @@ export default function AdminDashboard() {
       <div style={{ marginBottom: "2rem" }}>
         <h1>Admin Dashboard</h1>
         <p style={{ color: "var(--text-secondary)", marginTop: "0.25rem" }}>
-          Drivers log completed water can deliveries. Monitor and manage everything here.
+          Drivers log completed water can and case deliveries. Monitor and manage everything here.
         </p>
       </div>
 
@@ -124,7 +126,7 @@ export default function AdminDashboard() {
                     <th>Date & Time</th>
                     <th>Driver</th>
                     <th>Customer</th>
-                    <th>Cans</th>
+                    <th>Qty</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -146,7 +148,8 @@ export default function AdminDashboard() {
                         )}
                       </td>
                       <td style={{ fontWeight: 700 }}>
-                        {log.cansDelivered ?? "-"}
+                        {deliveredQuantity(log) ?? "-"}
+                        <div style={{ marginTop: "0.15rem" }}><ProductPill productType={log.productType} caseSize={log.caseSize} size="sm" /></div>
                       </td>
                     </tr>
                   ))}

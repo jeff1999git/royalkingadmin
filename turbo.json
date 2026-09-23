@@ -7,6 +7,7 @@
     "CLOUDINARY_URL",
     "ADMIN_USERNAME",
     "ADMIN_PASSWORD",
+    "NEXT_PUBLIC_GOOGLE_CLIENT_ID",
     "NODE_ENV"
   ],
   "tasks": {

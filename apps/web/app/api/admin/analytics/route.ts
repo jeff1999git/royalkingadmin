@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "../../../../lib/auth";
 import { newCustomerMatch, resolveAnalyticsRange } from "../../../../lib/analyticsRange";
 import { connectToDatabase } from "../../../../lib/mongodb";
+import { SUM_CASES } from "../../../../lib/supplyProduct";
 import SupplyLog from "../../../../models/SupplyLog";
 import Customer from "../../../../models/Customer";
 import { Types } from "mongoose";
@@ -60,6 +61,7 @@ export async function GET(req: NextRequest) {
           _id: { $dateToString: { format: "%Y-%m-%d", date: "$suppliedAt", timezone: "+05:30" } },
           count: { $sum: 1 },
           totalCans: { $sum: { $ifNull: ["$cansDelivered", 0] } },
+          totalCases: SUM_CASES,
         },
       },
     ]),
@@ -74,11 +76,11 @@ export async function GET(req: NextRequest) {
     ]),
   ]);
 
-  type DeliveryBucket = { _id: string; count: number; totalCans: number };
+  type DeliveryBucket = { _id: string; count: number; totalCans: number; totalCases: number };
   type RegBucket = { _id: string; count: number };
 
-  const deliveryMap = new Map<string, { count: number; totalCans: number }>(
-    (deliveryAgg as DeliveryBucket[]).map((d) => [d._id, { count: d.count, totalCans: d.totalCans }])
+  const deliveryMap = new Map<string, { count: number; totalCans: number; totalCases: number }>(
+    (deliveryAgg as DeliveryBucket[]).map((d) => [d._id, { count: d.count, totalCans: d.totalCans, totalCases: d.totalCases }])
   );
   const registrationMap = new Map<string, number>(
     (registrationAgg as RegBucket[]).map((r) => [r._id, r.count])
@@ -88,6 +90,7 @@ export async function GET(req: NextRequest) {
     date,
     count: deliveryMap.get(date)?.count ?? 0,
     totalCans: deliveryMap.get(date)?.totalCans ?? 0,
+    totalCases: deliveryMap.get(date)?.totalCases ?? 0,
   }));
 
   const registrations = dateLabels.map((date) => ({
