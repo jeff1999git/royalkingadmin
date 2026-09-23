@@ -7,7 +7,7 @@ import {
   useAdminCustomerDetail,
   useAdminCustomerHistory,
 } from "../../../hooks/useAdminQueries";
-import { deliveredQuantity } from "../../../../lib/supplyProduct";
+import { casesBySizeText, deliveredQuantity } from "../../../../lib/supplyProduct";
 import ProductPill from "../../../components/ProductPill";
 
 const locationTypeLabel = (lt?: string) =>
@@ -137,12 +137,6 @@ export default function CustomerHistoryPage() {
                 <div style={{ fontWeight: 600 }}>₹{customer.cashPerCan}</div>
               </div>
             )}
-            {customer.cashPerCase !== undefined && (
-              <div>
-                <div className="text-sm text-muted">Cash Per Case</div>
-                <div style={{ fontWeight: 600 }}>₹{customer.cashPerCase}</div>
-              </div>
-            )}
             {customer.securityDeposit !== undefined && (
               <div>
                 <div className="text-sm text-muted">Security Deposit</div>
@@ -225,7 +219,10 @@ export default function CustomerHistoryPage() {
       >
         <span><strong style={{ color: "var(--text-primary)" }}>Deliveries:</strong> {historyData?.total ?? 0}</span>
         <span><strong style={{ color: "var(--text-primary)" }}>Cans Del.:</strong> {stats?.totalCans ?? 0}</span>
-        <span><strong style={{ color: "var(--text-primary)" }}>Cases Del.:</strong> {stats?.totalCases ?? 0}</span>
+        <span>
+          <strong style={{ color: "var(--text-primary)" }}>Cases Del.:</strong> {stats?.totalCases ?? 0}
+          {casesBySizeText(stats?.casesBySize, stats?.totalCases ?? 0) && ` (${casesBySizeText(stats?.casesBySize, stats?.totalCases ?? 0)})`}
+        </span>
         <span><strong style={{ color: "var(--text-primary)" }}>Taken Back:</strong> {stats?.totalCansTakenBack ?? 0}</span>
         <span style={{ fontSize: "1.05rem", fontWeight: 800, color: "var(--text-primary)" }}>
           Total Amount: {(stats?.totalAmount ?? 0).toLocaleString("en-IN")}
@@ -269,7 +266,7 @@ export default function CustomerHistoryPage() {
                   <td>{log.formattedSuppliedAt}</td>
                   <td style={{ fontWeight: 700 }}>
                     {deliveredQuantity(log) ?? "-"}
-                    <div style={{ marginTop: "0.15rem" }}><ProductPill productType={log.productType} size="sm" /></div>
+                    <div style={{ marginTop: "0.15rem" }}><ProductPill productType={log.productType} caseSize={log.caseSize} size="sm" /></div>
                   </td>
                   <td>{log.cansTakenBack ?? "-"}</td>
                   <td>{log.amount !== undefined ? `₹${log.amount.toLocaleString("en-IN")}` : "-"}</td>

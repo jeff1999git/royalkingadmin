@@ -51,7 +51,6 @@ export async function PATCH(
     locationType?: "home" | "office" | "both" | "";
     subscriptionCans?: number | string;
     cashPerCan?: number | string | null;
-    cashPerCase?: number | string | null;
     securityDeposit?: number | string | null;
     isActive?: boolean;
     registeredDate?: string;
@@ -108,17 +107,6 @@ export async function PATCH(
         return NextResponse.json({ error: "Cash per can must be a non-negative number." }, { status: 400 });
       }
       setPayload.cashPerCan = cashPerCan;
-    }
-  }
-  if (body.cashPerCase !== undefined) {
-    if (body.cashPerCase === null || body.cashPerCase === "") {
-      unsetPayload.cashPerCase = 1;
-    } else {
-      const cashPerCase = Number(body.cashPerCase);
-      if (isNaN(cashPerCase) || cashPerCase < 0) {
-        return NextResponse.json({ error: "Cash per case must be a non-negative number." }, { status: 400 });
-      }
-      setPayload.cashPerCase = cashPerCase;
     }
   }
   if (body.securityDeposit !== undefined) {

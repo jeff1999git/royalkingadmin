@@ -29,7 +29,7 @@ export async function GET(req: NextRequest) {
   if (!pageParam && !limitParam) {
     // No pagination params — trimmed array for dropdowns
     const customers = await Customer.find(baseQuery)
-      .select("name phone area isActive locationType subscriptionCans cashPerCan cashPerCase")
+      .select("name phone area isActive locationType subscriptionCans cashPerCan")
       .sort({ isActive: -1, name: 1 })
       .lean();
     return NextResponse.json(customers);
@@ -77,7 +77,6 @@ export async function POST(req: NextRequest) {
     locationType?: "home" | "office" | "both";
     subscriptionCans?: number | string;
     cashPerCan?: number | string;
-    cashPerCase?: number | string;
     securityDeposit?: number | string;
     registeredDate?: string;
   };
@@ -90,7 +89,6 @@ export async function POST(req: NextRequest) {
   const locationType = body.locationType;
   const subscriptionCans = Number(body.subscriptionCans ?? 1);
   const cashPerCan = body.cashPerCan !== undefined && body.cashPerCan !== "" ? Number(body.cashPerCan) : undefined;
-  const cashPerCase = body.cashPerCase !== undefined && body.cashPerCase !== "" ? Number(body.cashPerCase) : undefined;
   const securityDeposit = body.securityDeposit !== undefined && body.securityDeposit !== "" ? Number(body.securityDeposit) : undefined;
   const registeredDate = body.registeredDate ? new Date(body.registeredDate) : new Date();
 
@@ -102,9 +100,6 @@ export async function POST(req: NextRequest) {
   }
   if (cashPerCan !== undefined && (isNaN(cashPerCan) || cashPerCan < 0)) {
     return NextResponse.json({ error: "Cash per can must be a non-negative number." }, { status: 400 });
-  }
-  if (cashPerCase !== undefined && (isNaN(cashPerCase) || cashPerCase < 0)) {
-    return NextResponse.json({ error: "Cash per case must be a non-negative number." }, { status: 400 });
   }
   if (securityDeposit !== undefined && (isNaN(securityDeposit) || securityDeposit < 0)) {
     return NextResponse.json({ error: "Security deposit must be a non-negative number." }, { status: 400 });
@@ -124,7 +119,6 @@ export async function POST(req: NextRequest) {
       locationType,
       subscriptionCans,
       cashPerCan,
-      cashPerCase,
       securityDeposit,
       registeredDate,
       ...(Types.ObjectId.isValid(session.user.id) ? { createdBy: session.user.id } : {}),

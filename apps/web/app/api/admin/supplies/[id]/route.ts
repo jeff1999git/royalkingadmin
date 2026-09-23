@@ -11,6 +11,7 @@ import {
   parseOptionalNumber,
   toProductType,
   validateDeliveryQuantities,
+  type CaseSize,
   type DeliveryQuantities,
   type ProductType,
 } from "../../../../../lib/supplyProduct";
@@ -42,6 +43,8 @@ export async function PATCH(
     cansDelivered?: number | string;
     cansTakenBack?: number | string;
     casesDelivered?: number | string;
+    caseSize?: string;
+    casePrice?: number | string;
     cashType?: "debit" | "fuel";
     paymentStatus?: "cash" | "upi" | "not_paid";
   };
@@ -57,6 +60,8 @@ export async function PATCH(
   const cansDelivered = parseOptionalNumber(body.cansDelivered);
   const cansTakenBack = parseOptionalNumber(body.cansTakenBack);
   const casesDelivered = parseOptionalNumber(body.casesDelivered);
+  const caseSize = body.caseSize === "" || body.caseSize === null ? undefined : body.caseSize;
+  const casePrice = parseOptionalNumber(body.casePrice);
 
   if (amountValue !== undefined && (!Number.isFinite(amountValue) || amountValue < 0)) {
     return NextResponse.json({ error: "Amount must be a valid non-negative number." }, { status: 400 });
@@ -98,6 +103,8 @@ export async function PATCH(
     cansDelivered?: number;
     cansTakenBack?: number;
     casesDelivered?: number;
+    caseSize?: CaseSize;
+    casePrice?: number;
     cashType?: "debit" | "fuel";
     paymentStatus?: "cash" | "upi" | "not_paid";
   } = {};
@@ -114,11 +121,13 @@ export async function PATCH(
     body.productType !== undefined ||
     cansDelivered !== undefined ||
     cansTakenBack !== undefined ||
-    casesDelivered !== undefined;
+    casesDelivered !== undefined ||
+    caseSize !== undefined ||
+    casePrice !== undefined;
   if (touchesProduct) {
     const existingLog = await SupplyLog.findById(id)
-      .select("logType productType customer")
-      .populate<{ customer?: { cashPerCan?: number; cashPerCase?: number } | null }>("customer", "cashPerCan cashPerCase")
+      .select("logType productType customer casesDelivered casePrice")
+      .populate<{ customer?: { cashPerCan?: number } | null }>("customer", "cashPerCan")
       .lean();
     if (!existingLog) {
       return NextResponse.json({ error: "Supply not found." }, { status: 404 });
@@ -132,8 +141,9 @@ export async function PATCH(
     // Sending "can" for an older row with no productType just records it; that
     // is not a switch.
     const switching = targetType !== currentType;
-    const quantities: DeliveryQuantities = { productType: targetType, cansDelivered, cansTakenBack, casesDelivered };
-    // A switch must carry the new product's quantity; a plain edit may leave it out.
+    const quantities: DeliveryQuantities = { productType: targetType, cansDelivered, cansTakenBack, casesDelivered, caseSize, casePrice };
+    // A switch must carry everything the new product needs; a plain edit may
+    // leave fields out.
     const quantityError = validateDeliveryQuantities(quantities, { partial: !switching });
     if (quantityError) {
       return NextResponse.json({ error: quantityError }, { status: 400 });
@@ -142,6 +152,8 @@ export async function PATCH(
     if (body.productType !== undefined) setPayload.productType = targetType;
     if (targetType === "case") {
       if (casesDelivered !== undefined) setPayload.casesDelivered = casesDelivered;
+      if (caseSize !== undefined) setPayload.caseSize = caseSize as CaseSize; // validated above
+      if (casePrice !== undefined) setPayload.casePrice = casePrice;
       if (switching) {
         unsetPayload.cansDelivered = 1;
         unsetPayload.cansTakenBack = 1;
@@ -149,14 +161,29 @@ export async function PATCH(
     } else {
       if (cansDelivered !== undefined) setPayload.cansDelivered = cansDelivered;
       if (cansTakenBack !== undefined) setPayload.cansTakenBack = cansTakenBack;
-      if (switching) unsetPayload.casesDelivered = 1;
+      if (switching) {
+        unsetPayload.casesDelivered = 1;
+        unsetPayload.caseSize = 1;
+        unsetPayload.casePrice = 1;
+      }
     }
 
-    // An amount sent in the body wins. Otherwise re-price from the customer's
-    // rate for the row's (new) product. After a switch, an amount that was
-    // priced in the other unit is never kept: it is cleared if there is no rate.
-    if (amountValue === undefined && (switching || deliveredQuantity(quantities) !== undefined)) {
-      const amount = autoAmount(existingLog.customer, quantities);
+    // An amount sent in the body wins. Otherwise re-price the row's (new)
+    // product: cans from the customer's rate, cases from cases × price per
+    // case, using the saved value for whichever of the two wasn't sent. After
+    // a switch, an amount priced as the other product is never kept: it is
+    // cleared if the new one can't be priced.
+    const repriceCase = targetType === "case" && (casesDelivered !== undefined || casePrice !== undefined);
+    if (amountValue === undefined && (switching || repriceCase || deliveredQuantity(quantities) !== undefined)) {
+      const priced: DeliveryQuantities =
+        targetType === "case" && !switching
+          ? {
+              ...quantities,
+              casesDelivered: casesDelivered ?? existingLog.casesDelivered,
+              casePrice: casePrice ?? existingLog.casePrice,
+            }
+          : quantities;
+      const amount = autoAmount(existingLog.customer, priced);
       if (amount !== undefined) setPayload.amount = amount;
       else if (switching) unsetPayload.amount = 1;
     }

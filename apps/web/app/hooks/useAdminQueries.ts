@@ -1,6 +1,7 @@
 "use client";
 
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { CaseSize, CasesBySize } from "../../lib/supplyProduct";
 
 function formatDateTime(value: string | Date) {
   return new Date(value).toLocaleString("en-IN", {
@@ -48,7 +49,6 @@ export interface Customer {
   locationType?: "home" | "office" | "both";
   subscriptionCans: number;
   cashPerCan?: number;
-  cashPerCase?: number;
   securityDeposit?: number;
   isActive: boolean;
   registeredDate?: string;
@@ -74,6 +74,8 @@ export interface SupplyLog {
   cansDelivered?: number;
   cansTakenBack?: number;
   casesDelivered?: number;
+  caseSize?: CaseSize;
+  casePrice?: number;
   notes?: string;
   amount?: number;
   logType?: "water" | "cash";
@@ -123,6 +125,7 @@ export interface PaginatedSupplyLogsWithStats {
     totalCans: number;
     totalCansTakenBack: number;
     totalCases: number;
+    casesBySize: CasesBySize;
     totalAmount: number;
     uniqueDrivers: number;
     uniqueCustomers: number;
@@ -419,7 +422,6 @@ export interface NewCustomer {
   locationType?: "home" | "office" | "both";
   subscriptionCans: number;
   cashPerCan?: number;
-  cashPerCase?: number;
   isActive: boolean;
   isDeleted?: boolean;
   registeredDate?: string;

@@ -6,6 +6,8 @@ import { istDateRange, istDayEnd, istDayStart, istMonthRange } from "../../../..
 import { connectToDatabase } from "../../../../lib/mongodb";
 import {
   autoAmount,
+  CASE_SIZE_GROUP,
+  casesBySizeFrom,
   deliveredQuantity,
   parseOptionalNumber,
   SUM_CASES,
@@ -194,6 +196,7 @@ export async function GET(req: NextRequest) {
             totalCans: { $sum: { $ifNull: ["$cansDelivered", 0] } },
             totalCansTakenBack: { $sum: { $ifNull: ["$cansTakenBack", 0] } },
             totalCases: SUM_CASES,
+            ...CASE_SIZE_GROUP,
             totalAmount: { $sum: { $ifNull: ["$amount", 0] } },
             driverIds: { $addToSet: "$driver" },
             customerIds: { $addToSet: "$customer" },
@@ -221,6 +224,7 @@ export async function GET(req: NextRequest) {
       totalCans: agg?.totalCans ?? 0,
       totalCansTakenBack: agg?.totalCansTakenBack ?? 0,
       totalCases: agg?.totalCases ?? 0,
+      casesBySize: casesBySizeFrom(agg),
       totalAmount: agg?.totalAmount ?? 0,
       uniqueDrivers: agg?.driverIds?.length ?? 0,
       uniqueCustomers: agg?.customerIds?.length ?? 0,
@@ -247,6 +251,8 @@ export async function POST(req: NextRequest) {
     cansDelivered?: number | string;
     cansTakenBack?: number | string;
     casesDelivered?: number | string;
+    caseSize?: string;
+    casePrice?: number | string;
     amount?: number | string;
     cashType?: "debit" | "fuel";
     vehicleId?: string;
@@ -275,6 +281,8 @@ export async function POST(req: NextRequest) {
     cansDelivered: parseOptionalNumber(body.cansDelivered),
     cansTakenBack: parseOptionalNumber(body.cansTakenBack),
     casesDelivered: parseOptionalNumber(body.casesDelivered),
+    caseSize: body.caseSize === "" || body.caseSize === null ? undefined : body.caseSize,
+    casePrice: parseOptionalNumber(body.casePrice),
   };
   const amountValue =
     body.amount !== undefined && body.amount !== ""
@@ -302,8 +310,8 @@ export async function POST(req: NextRequest) {
 
   await connectToDatabase();
 
-  // An amount typed by the admin wins; otherwise price from the customer's rate
-  // for the chosen product.
+  // An amount typed by the admin wins; otherwise cans are priced from the
+  // customer's rate and cases from the price per case entered here.
   let calculatedAmount = amountValue;
   if (logType === "water" && customerId && deliveredQuantity(quantities) !== undefined && calculatedAmount === undefined) {
     const customer = await Customer.findOne({ _id: customerId, isActive: true }).lean();
@@ -326,6 +334,8 @@ export async function POST(req: NextRequest) {
       payload.productType = productType;
       if (productType === "case") {
         payload.casesDelivered = quantities.casesDelivered;
+        payload.caseSize = quantities.caseSize;
+        payload.casePrice = quantities.casePrice;
       } else {
         if (quantities.cansDelivered !== undefined) payload.cansDelivered = quantities.cansDelivered;
         if (quantities.cansTakenBack !== undefined) payload.cansTakenBack = quantities.cansTakenBack;

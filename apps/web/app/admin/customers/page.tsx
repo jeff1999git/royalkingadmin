@@ -71,7 +71,6 @@ export default function CustomersPage() {
     locationType: "home" as "home" | "office" | "both",
     subscriptionCans: "1",
     cashPerCan: "",
-    cashPerCase: "",
     securityDeposit: "",
     registeredDate: todayISO(),
   });
@@ -90,7 +89,6 @@ export default function CustomersPage() {
     locationType: "" as "home" | "office" | "both" | "",
     subscriptionCans: "1",
     cashPerCan: "",
-    cashPerCase: "",
     securityDeposit: "",
     isActive: true,
     registeredDate: todayISO(),
@@ -131,7 +129,6 @@ export default function CustomersPage() {
           locationType: formData.locationType,
           subscriptionCans: Number(formData.subscriptionCans),
           cashPerCan: formData.cashPerCan !== "" ? Number(formData.cashPerCan) : undefined,
-          cashPerCase: formData.cashPerCase !== "" ? Number(formData.cashPerCase) : undefined,
           securityDeposit: formData.securityDeposit !== "" ? Number(formData.securityDeposit) : undefined,
           registeredDate: formData.registeredDate || undefined,
         }),
@@ -140,7 +137,7 @@ export default function CustomersPage() {
       setSubmitting(false);
       if (!res.ok) { setFormError(d.error ?? "Failed to create customer"); return; }
       setFormSuccess("Customer created!");
-      setFormData({ name: "", phone: "", email: "", address: "", area: "", locationType: "home", subscriptionCans: "1", cashPerCan: "", cashPerCase: "", securityDeposit: "", registeredDate: todayISO() });
+      setFormData({ name: "", phone: "", email: "", address: "", area: "", locationType: "home", subscriptionCans: "1", cashPerCan: "", securityDeposit: "", registeredDate: todayISO() });
       invalidateCustomers();
       setTimeout(() => { setShowForm(false); setFormSuccess(""); }, 1500);
     } catch {
@@ -160,7 +157,6 @@ export default function CustomersPage() {
       locationType: customer.locationType ?? "",
       subscriptionCans: String(customer.subscriptionCans),
       cashPerCan: customer.cashPerCan !== undefined ? String(customer.cashPerCan) : "",
-      cashPerCase: customer.cashPerCase !== undefined ? String(customer.cashPerCase) : "",
       securityDeposit: customer.securityDeposit !== undefined ? String(customer.securityDeposit) : "",
       isActive: customer.isActive,
       registeredDate: isoToDateInput(customer.registeredDate ?? customer.createdAt),
@@ -185,7 +181,6 @@ export default function CustomersPage() {
           locationType: editData.locationType || undefined,
           subscriptionCans: Number(editData.subscriptionCans),
           cashPerCan: editData.cashPerCan !== "" ? Number(editData.cashPerCan) : null,
-          cashPerCase: editData.cashPerCase !== "" ? Number(editData.cashPerCase) : null,
           securityDeposit: editData.securityDeposit !== "" ? Number(editData.securityDeposit) : null,
           isActive: editData.isActive,
           registeredDate: editData.registeredDate || undefined,
@@ -471,10 +466,6 @@ export default function CustomersPage() {
                   <input id="cCashPerCan" className="form-input" type="number" min="0" step="0.01" value={formData.cashPerCan} onChange={(e) => setFormData((f) => ({ ...f, cashPerCan: e.target.value }))} placeholder="e.g. 50" />
                 </div>
                 <div className="form-group">
-                  <label className="form-label" htmlFor="cCashPerCase">Cash Per Case (₹)</label>
-                  <input id="cCashPerCase" className="form-input" type="number" min="0" step="0.01" value={formData.cashPerCase} onChange={(e) => setFormData((f) => ({ ...f, cashPerCase: e.target.value }))} placeholder="e.g. 300" />
-                </div>
-                <div className="form-group">
                   <label className="form-label" htmlFor="cSecurityDeposit">Security Deposit (₹)</label>
                   <input id="cSecurityDeposit" className="form-input" type="number" min="0" step="0.01" value={formData.securityDeposit} onChange={(e) => setFormData((f) => ({ ...f, securityDeposit: e.target.value }))} placeholder="e.g. 500" />
                 </div>
@@ -567,10 +558,6 @@ export default function CustomersPage() {
               <div className="form-group">
                 <label className="form-label" htmlFor="eCashPerCan">Cash Per Can (₹)</label>
                 <input id="eCashPerCan" className="form-input" type="number" min="0" step="0.01" value={editData.cashPerCan} onChange={(e) => setEditData((d) => ({ ...d, cashPerCan: e.target.value }))} placeholder="e.g. 50" />
-              </div>
-              <div className="form-group">
-                <label className="form-label" htmlFor="eCashPerCase">Cash Per Case (₹)</label>
-                <input id="eCashPerCase" className="form-input" type="number" min="0" step="0.01" value={editData.cashPerCase} onChange={(e) => setEditData((d) => ({ ...d, cashPerCase: e.target.value }))} placeholder="e.g. 300" />
               </div>
               <div className="form-group">
                 <label className="form-label" htmlFor="eSecurityDeposit">Security Deposit (₹)</label>

@@ -299,7 +299,6 @@ function NewCustomerRow({ customer }: { customer: NewCustomer }) {
     locationLabel(customer.locationType),
     `${customer.subscriptionCans} can${customer.subscriptionCans === 1 ? "" : "s"}/day`,
     customer.cashPerCan !== undefined ? `₹${customer.cashPerCan}/can` : "",
-    customer.cashPerCase !== undefined ? `₹${customer.cashPerCase}/case` : "",
   ].filter(Boolean);
 
   return (

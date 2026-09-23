@@ -149,7 +149,7 @@ export default function AdminDashboard() {
                       </td>
                       <td style={{ fontWeight: 700 }}>
                         {deliveredQuantity(log) ?? "-"}
-                        <div style={{ marginTop: "0.15rem" }}><ProductPill productType={log.productType} size="sm" /></div>
+                        <div style={{ marginTop: "0.15rem" }}><ProductPill productType={log.productType} caseSize={log.caseSize} size="sm" /></div>
                       </td>
                     </tr>
                   ))}

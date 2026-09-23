@@ -10,6 +10,7 @@ import {
   parseOptionalNumber,
   toProductType,
   validateDeliveryQuantities,
+  type CaseSize,
   type DeliveryQuantities,
   type ProductType,
 } from "../../../../lib/supplyProduct";
@@ -24,6 +25,8 @@ type DriverSupplyRequestBody = {
   cansDelivered?: number | string;
   cansTakenBack?: number | string;
   casesDelivered?: number | string;
+  caseSize?: string;
+  casePrice?: number | string;
   vehicleId?: string;
   notes?: string;
   amount?: number | string;
@@ -46,6 +49,8 @@ async function parseDriverSupplyRequest(req: NextRequest): Promise<DriverSupplyR
       cansTakenBack: typeof formData.get("cansTakenBack") === "string" ? formData.get("cansTakenBack") as string : undefined,
       productType: typeof formData.get("productType") === "string" ? (formData.get("productType") as "can" | "case") : undefined,
       casesDelivered: typeof formData.get("casesDelivered") === "string" ? formData.get("casesDelivered") as string : undefined,
+      caseSize: typeof formData.get("caseSize") === "string" ? formData.get("caseSize") as string : undefined,
+      casePrice: typeof formData.get("casePrice") === "string" ? formData.get("casePrice") as string : undefined,
       vehicleId: typeof formData.get("vehicleId") === "string" ? formData.get("vehicleId") as string : undefined,
       notes: typeof formData.get("notes") === "string" ? formData.get("notes") as string : undefined,
       amount: typeof formData.get("amount") === "string" ? formData.get("amount") as string : undefined,
@@ -113,6 +118,8 @@ export async function POST(req: NextRequest) {
     cansDelivered: parseOptionalNumber(body.cansDelivered),
     cansTakenBack: parseOptionalNumber(body.cansTakenBack),
     casesDelivered: parseOptionalNumber(body.casesDelivered),
+    caseSize: body.caseSize === "" || body.caseSize === null ? undefined : body.caseSize,
+    casePrice: parseOptionalNumber(body.casePrice),
   };
   const amountValue =
     body.amount === undefined || body.amount === null || body.amount === ""
@@ -185,6 +192,8 @@ export async function POST(req: NextRequest) {
       cansDelivered?: number;
       cansTakenBack?: number;
       casesDelivered?: number;
+      caseSize?: CaseSize;
+      casePrice?: number;
       amount?: number;
       paymentStatus?: "cash" | "upi" | "not_paid";
       cashType?: "debit" | "fuel";
@@ -202,6 +211,8 @@ export async function POST(req: NextRequest) {
       payload.productType = productType;
       if (productType === "case") {
         payload.casesDelivered = quantities.casesDelivered;
+        payload.caseSize = quantities.caseSize as CaseSize; // validated above
+        payload.casePrice = quantities.casePrice;
       } else {
         if (quantities.cansDelivered !== undefined) payload.cansDelivered = quantities.cansDelivered;
         if (quantities.cansTakenBack !== undefined) payload.cansTakenBack = quantities.cansTakenBack;

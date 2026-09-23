@@ -1,4 +1,5 @@
 import { model, models, Schema, type Model, type Types } from "mongoose";
+import { CASE_SIZES, type CaseSize } from "../lib/supplyProduct";
 
 export interface SupplyLogDocument {
   driver: Types.ObjectId;
@@ -8,6 +9,9 @@ export interface SupplyLogDocument {
   cansDelivered?: number;
   cansTakenBack?: number;
   casesDelivered?: number;
+  caseSize?: CaseSize;
+  // ₹ for one case, entered with the delivery; amount = casesDelivered × casePrice.
+  casePrice?: number;
   suppliedAt: Date;
   notes?: string;
   amount?: number;
@@ -43,6 +47,8 @@ const SupplyLogSchema = new Schema<SupplyLogDocument>(
     cansDelivered: { type: Number },
     cansTakenBack: { type: Number, min: 0 },
     casesDelivered: { type: Number, min: 1 },
+    caseSize: { type: String, enum: CASE_SIZES },
+    casePrice: { type: Number, min: 0 },
     suppliedAt: { type: Date, required: true },
     notes: { type: String },
     amount: { type: Number },
@@ -53,7 +59,8 @@ const SupplyLogSchema = new Schema<SupplyLogDocument>(
       required: true,
     },
     // Water rows only. A row carries exactly one quantity family matching it:
-    // cansDelivered (+ cansTakenBack) for "can", casesDelivered for "case".
+    // cansDelivered (+ cansTakenBack) for "can"; casesDelivered, caseSize and
+    // casePrice for "case".
     // Older rows have no productType and count as "can", so filter cans with
     // { productType: { $ne: "case" } }, never { productType: "can" }.
     productType: { type: String, enum: ["can", "case"] },
