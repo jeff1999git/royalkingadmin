@@ -198,6 +198,26 @@ button.card {
   font-size: 0.8rem;
 }
 
+/* Items in the Deliveries "Download" menu */
+.download-menu-item {
+  display: block;
+  width: 100%;
+  padding: 0.65rem 1rem;
+  border: none;
+  background: transparent;
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.download-menu-item:hover,
+.download-menu-item:focus-visible {
+  background: #f1f5f9;
+}
+
 .btn-full {
   width: 100%;
   justify-content: center;
