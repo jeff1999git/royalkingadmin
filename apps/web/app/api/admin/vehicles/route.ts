@@ -1,56 +1,60 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "../../../../lib/auth";
+import { badRequest, jsonError, readJsonObject, requiredString, serverError, unauthorized } from "../../../../lib/api";
+import { requireAdmin } from "../../../../lib/authHelpers";
 import { connectToDatabase } from "../../../../lib/mongodb";
 import Vehicle from "../../../../models/Vehicle";
 
-export async function GET() {
-  const session = await getServerSession(authOptions);
-  if (!session || session.user.role !== "admin") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+function escapeRegex(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
-  await connectToDatabase();
-  const vehicles = await Vehicle.find()
-    .select("-odometerHistory")
-    .sort({ createdAt: -1 })
-    .lean();
-  return NextResponse.json(vehicles);
+export async function GET() {
+  const admin = await requireAdmin();
+  if (!admin) return unauthorized();
+
+  try {
+    await connectToDatabase();
+    const vehicles = await Vehicle.find()
+      .select("-odometerHistory")
+      .sort({ createdAt: -1 })
+      .lean();
+    return NextResponse.json(vehicles);
+  } catch (err) {
+    return serverError(err);
+  }
 }
 
 export async function POST(req: NextRequest) {
-  const session = await getServerSession(authOptions);
-  if (!session || session.user.role !== "admin") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const admin = await requireAdmin();
+  if (!admin) return unauthorized();
 
-  const body = (await req.json()) as {
-    name?: string;
-    vehicleNumber?: string;
-    capacity?: string;
-  };
+  const body = await readJsonObject(req);
+  if (!body) return badRequest("Invalid request body.");
 
-  const name = body.name?.trim();
-  const vehicleNumber = body.vehicleNumber?.trim().toUpperCase();
-  const capacity = body.capacity?.trim();
+  // "Number" (registration) is stored in `name`; "Model" in `vehicleNumber`.
+  const name = requiredString(body.name, 200);
+  const vehicleNumber = requiredString(body.vehicleNumber, 100);
+  const capacity = requiredString(body.capacity, 100);
 
   if (!name || !vehicleNumber || !capacity) {
-    return NextResponse.json(
-      { error: "Name, vehicle number, and capacity are required." },
-      { status: 400 }
-    );
+    return badRequest("Number, model, and capacity are required.");
   }
 
-  await connectToDatabase();
+  try {
+    await connectToDatabase();
 
-  const existing = await Vehicle.findOne({ vehicleNumber }).lean();
-  if (existing) {
-    return NextResponse.json(
-      { error: "Vehicle number already exists." },
-      { status: 409 }
-    );
+    // Two vehicles can share a model, but not a registration number.
+    const existing = await Vehicle.exists({ name: { $regex: `^${escapeRegex(name)}$`, $options: "i" } });
+    if (existing) {
+      return jsonError("A vehicle with this number already exists.", 409);
+    }
+
+    const vehicle = await Vehicle.create({ name, vehicleNumber, capacity });
+    return NextResponse.json(vehicle, { status: 201 });
+  } catch (err: unknown) {
+    if (err && typeof err === "object" && "code" in err && (err as { code: number }).code === 11000) {
+      return jsonError("A vehicle with this number already exists.", 409);
+    }
+    return serverError(err);
   }
-
-  const vehicle = await Vehicle.create({ name, vehicleNumber, capacity });
-  return NextResponse.json(vehicle, { status: 201 });
 }

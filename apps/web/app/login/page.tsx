@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, FormEvent, useEffect, Suspense } from "react";
-import { signIn, useSession } from "next-auth/react";
+import { useState, FormEvent, Suspense } from "react";
+import { signIn } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import InstallPrompt from "../components/InstallPrompt";
@@ -12,30 +12,13 @@ function LoginForm() {
     const searchParams = useSearchParams();
     const role = searchParams?.get("role"); // 'admin' or 'driver'
 
-    const { data: session, status } = useSession();
     const [username, setUsername] = useState("");
     const [password, setPassword] = useState("");
     const [error, setError] = useState("");
     const [loading, setLoading] = useState(false);
 
-    // Auto-redirect if already logged in
-    useEffect(() => {
-        if (status === "authenticated" && session?.user) {
-            if (session.user.role === "admin") {
-                router.replace("/admin/amounts");
-            } else if (session.user.role === "driver") {
-                router.replace("/driver");
-            }
-        }
-    }, [session, status, router]);
-
-    if (status === "loading" || status === "authenticated") {
-        return (
-            <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "var(--bg-secondary)" }}>
-                <div style={{ color: "var(--text-secondary)", fontSize: "0.9rem", fontWeight: 500 }}>Redirecting…</div>
-            </div>
-        );
-    }
+    // Anyone already signed in is redirected by proxy.ts before this page
+    // renders, so there is no session check here and the form paints at once.
 
     async function handleSubmit(e: FormEvent) {
         e.preventDefault();
@@ -49,22 +32,24 @@ function LoginForm() {
                 redirect: false,
             });
 
-            setLoading(false);
-
             if (!res?.ok) {
                 setError("Invalid username or password.");
+                setLoading(false);
                 return;
             }
 
-            const sessionRes = await fetch("/api/auth/session");
-            const sess = await sessionRes.json() as { user?: { role: string } };
+            // The role decides which portal to open. replace() keeps the login
+            // page out of the back-button history.
+            const sessionRes = await fetch("/api/auth/session", { cache: "no-store" });
+            const sess = (await sessionRes.json()) as { user?: { role?: string } };
 
             if (sess?.user?.role === "admin") {
-                router.push("/admin/amounts");
+                router.replace("/admin/amounts");
             } else if (sess?.user?.role === "driver") {
-                router.push("/driver");
+                router.replace("/driver");
             } else {
                 setError("Unexpected error. Please try again.");
+                setLoading(false);
             }
         } catch {
             setLoading(false);

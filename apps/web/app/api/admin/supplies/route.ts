@@ -1,14 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Types } from "mongoose";
-import { getServerSession } from "next-auth";
-import { authOptions } from "../../../../lib/auth";
-import { istDateRange, istDayEnd, istDayStart, istMonthRange } from "../../../../lib/istTime";
+import { badRequest, notFound, optionalNumber, optionalString, readJsonObject, serverError, unauthorized } from "../../../../lib/api";
+import { requireAdmin } from "../../../../lib/authHelpers";
+import { istDateRange, istDayEnd, istDayStart, istMonthRange, parseSuppliedAtInput } from "../../../../lib/istTime";
 import { connectToDatabase } from "../../../../lib/mongodb";
 import {
   autoAmount,
   CASE_SIZE_GROUP,
   casesBySizeFrom,
-  deliveredQuantity,
   parseOptionalNumber,
   SUM_CASES,
   toProductType,
@@ -17,6 +16,15 @@ import {
 } from "../../../../lib/supplyProduct";
 import SupplyLog from "../../../../models/SupplyLog";
 import Customer from "../../../../models/Customer";
+import User from "../../../../models/User";
+import Vehicle from "../../../../models/Vehicle";
+
+// Fields the lists and exports never show. Leaving them out trims every row.
+const LIST_PROJECTION = "-billImagePublicId -__v";
+// Safety cap for the unpaginated (export) request.
+const EXPORT_MAX_ROWS = 5000;
+// Page 1 of the recent window holds the whole window.
+const WINDOW_MAX_ROWS = 500;
 
 function parseMonthRange(monthText: string) {
   const parts = monthText.split("-");
@@ -32,10 +40,8 @@ function parseMonthRange(monthText: string) {
 }
 
 export async function GET(req: NextRequest) {
-  const session = await getServerSession(authOptions);
-  if (!session || session.user.role !== "admin") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const admin = await requireAdmin();
+  if (!admin) return unauthorized();
 
   const dateParam = req.nextUrl.searchParams.get("date");
   const monthParam = req.nextUrl.searchParams.get("month");
@@ -65,17 +71,13 @@ export async function GET(req: NextRequest) {
 
   if (dateParam) {
     const dateRange = istDateRange(dateParam);
-    if (!dateRange) {
-      return NextResponse.json({ error: "Invalid date format." }, { status: 400 });
-    }
+    if (!dateRange) return badRequest("Invalid date format.");
     query.suppliedAt = { $gte: dateRange.start, $lte: dateRange.end };
   }
 
   if (monthParam) {
     const monthRange = parseMonthRange(monthParam);
-    if (!monthRange) {
-      return NextResponse.json({ error: "Invalid month format." }, { status: 400 });
-    }
+    if (!monthRange) return badRequest("Invalid month format.");
     query.suppliedAt = { $gte: monthRange.start, $lte: monthRange.end };
   }
 
@@ -85,30 +87,22 @@ export async function GET(req: NextRequest) {
   let windowStart: Date | null = null;
   if (daysParam && !dateParam && !monthParam) {
     const days = Number.parseInt(daysParam, 10);
-    if (!Number.isInteger(days) || days < 1 || days > 366) {
-      return NextResponse.json({ error: "Invalid days value." }, { status: 400 });
-    }
+    if (!Number.isInteger(days) || days < 1 || days > 366) return badRequest("Invalid days value.");
     windowStart = new Date(istDayStart().getTime() - (days - 1) * 24 * 60 * 60 * 1000);
   }
 
   if (driverParam) {
-    if (!Types.ObjectId.isValid(driverParam)) {
-      return NextResponse.json({ error: "Invalid driver id." }, { status: 400 });
-    }
+    if (!Types.ObjectId.isValid(driverParam)) return badRequest("Invalid driver id.");
     query.driver = new Types.ObjectId(driverParam);
   }
 
   if (vehicleParam) {
-    if (!Types.ObjectId.isValid(vehicleParam)) {
-      return NextResponse.json({ error: "Invalid vehicle id." }, { status: 400 });
-    }
+    if (!Types.ObjectId.isValid(vehicleParam)) return badRequest("Invalid vehicle id.");
     query.vehicle = new Types.ObjectId(vehicleParam);
   }
 
   if (customerParam) {
-    if (!Types.ObjectId.isValid(customerParam)) {
-      return NextResponse.json({ error: "Invalid customer id." }, { status: 400 });
-    }
+    if (!Types.ObjectId.isValid(customerParam)) return badRequest("Invalid customer id.");
     query.customer = new Types.ObjectId(customerParam);
   }
 
@@ -117,13 +111,13 @@ export async function GET(req: NextRequest) {
   } else if (amountStatusParam === "added") {
     query.amount = { $exists: true, $ne: null };
   } else if (amountStatusParam && amountStatusParam !== "all") {
-    return NextResponse.json({ error: "Invalid amountStatus value." }, { status: 400 });
+    return badRequest("Invalid amountStatus value.");
   }
 
   if (logTypeParam === "water" || logTypeParam === "cash") {
     query.logType = logTypeParam;
   } else if (logTypeParam) {
-    return NextResponse.json({ error: "Invalid logType value." }, { status: 400 });
+    return badRequest("Invalid logType value.");
   }
 
   if (paymentStatusParam === "cash") {
@@ -132,7 +126,7 @@ export async function GET(req: NextRequest) {
   } else if (paymentStatusParam === "upi" || paymentStatusParam === "not_paid") {
     query.paymentStatus = paymentStatusParam;
   } else if (paymentStatusParam && paymentStatusParam !== "") {
-    return NextResponse.json({ error: "Invalid paymentStatus value." }, { status: 400 });
+    return badRequest("Invalid paymentStatus value.");
   }
 
   if (productTypeParam === "can") {
@@ -141,12 +135,11 @@ export async function GET(req: NextRequest) {
   } else if (productTypeParam === "case") {
     query.productType = "case";
   } else if (productTypeParam) {
-    return NextResponse.json({ error: "Invalid productType value." }, { status: 400 });
+    return badRequest("Invalid productType value.");
   }
 
   try {
     await connectToDatabase();
-    void Customer; // ensure model is registered for populate
     const hasPagination = Boolean(pageParam || limitParam);
     const page = Math.max(1, Number.parseInt(pageParam ?? "1", 10) || 1);
     const limit = Math.max(1, Math.min(200, Number.parseInt(limitParam ?? "10", 10) || 10));
@@ -162,16 +155,17 @@ export async function GET(req: NextRequest) {
     // Window mode: page 1 holds the entire recent window, pages 2+ step
     // through older records limit at a time.
     const skip = windowStart ? (page <= 1 ? 0 : (page - 2) * limit) : (page - 1) * limit;
-    const fetchLimit = windowStart && page === 1 ? 500 : limit;
+    const fetchLimit = windowStart && page === 1 ? WINDOW_MAX_ROWS : limit;
 
     const findQuery = SupplyLog.find(query)
+      .select(LIST_PROJECTION)
       .populate("driver", "name username phone")
       .populate("vehicle", "name vehicleNumber capacity")
       .populate("customer", "name phone area")
       .sort({ suppliedAt: -1 });
 
     if (!hasPagination) {
-      const logs = await findQuery.lean();
+      const logs = await findQuery.limit(EXPORT_MAX_ROWS).lean();
       return NextResponse.json(logs);
     }
 
@@ -225,55 +219,37 @@ export async function GET(req: NextRequest) {
       totalCansTakenBack: agg?.totalCansTakenBack ?? 0,
       totalCases: agg?.totalCases ?? 0,
       casesBySize: casesBySizeFrom(agg),
-      totalAmount: agg?.totalAmount ?? 0,
+      totalAmount: Math.round((agg?.totalAmount ?? 0) * 100) / 100,
       uniqueDrivers: agg?.driverIds?.length ?? 0,
       uniqueCustomers: agg?.customerIds?.length ?? 0,
     };
 
     return NextResponse.json({ logs, total, page, limit, totalPages, serialStart, stats });
   } catch (err) {
-    console.error("[supplies GET]", err);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    return serverError(err, "Failed to load entries.");
   }
 }
 
 export async function POST(req: NextRequest) {
-  const session = await getServerSession(authOptions);
-  if (!session || session.user.role !== "admin") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const admin = await requireAdmin();
+  if (!admin) return unauthorized();
 
-  const body = (await req.json()) as {
-    driverId?: string;
-    customerId?: string;
-    logType?: "water" | "cash";
-    productType?: "can" | "case";
-    cansDelivered?: number | string;
-    cansTakenBack?: number | string;
-    casesDelivered?: number | string;
-    caseSize?: string;
-    casePrice?: number | string;
-    amount?: number | string;
-    cashType?: "debit" | "fuel";
-    vehicleId?: string;
-    notes?: string;
-    suppliedAt?: string;
-  };
+  const body = await readJsonObject(req);
+  if (!body) return badRequest("Invalid request body.");
 
   const logType = body.logType === "cash" ? "cash" : "water";
-  const driverId = body.driverId?.trim();
-  const customerId = body.customerId?.trim();
-  const vehicleId = body.vehicleId?.trim();
-  const notes = body.notes?.trim() || undefined;
+  const driverId = optionalString(body.driverId, 64);
+  const customerId = optionalString(body.customerId, 64);
+  const vehicleId = optionalString(body.vehicleId, 64);
+  const notes = optionalString(body.notes, 1000) || undefined;
 
-  const suppliedAt = body.suppliedAt ? new Date(body.suppliedAt) : new Date();
-  if (isNaN(suppliedAt.getTime())) {
-    return NextResponse.json({ error: "Invalid delivery date." }, { status: 400 });
-  }
+  const suppliedAt = body.suppliedAt === undefined || body.suppliedAt === null || body.suppliedAt === ""
+    ? new Date()
+    : parseSuppliedAtInput(body.suppliedAt);
+  if (!suppliedAt) return badRequest("Invalid delivery date.");
 
-  if (!driverId || !Types.ObjectId.isValid(driverId)) {
-    return NextResponse.json({ error: "Valid driver is required." }, { status: 400 });
-  }
+  if (!driverId || !Types.ObjectId.isValid(driverId)) return badRequest("Valid driver is required.");
+  if (vehicleId && !Types.ObjectId.isValid(vehicleId)) return badRequest("Invalid vehicle id.");
 
   const productType = toProductType(body.productType);
   const quantities: DeliveryQuantities = {
@@ -281,47 +257,43 @@ export async function POST(req: NextRequest) {
     cansDelivered: parseOptionalNumber(body.cansDelivered),
     cansTakenBack: parseOptionalNumber(body.cansTakenBack),
     casesDelivered: parseOptionalNumber(body.casesDelivered),
-    caseSize: body.caseSize === "" || body.caseSize === null ? undefined : body.caseSize,
+    caseSize: optionalString(body.caseSize, 10) || undefined,
     casePrice: parseOptionalNumber(body.casePrice),
   };
-  const amountValue =
-    body.amount !== undefined && body.amount !== ""
-      ? Number(body.amount)
-      : undefined;
+
+  // An amount typed by the admin. Anything sent that isn't a non-negative
+  // number is rejected rather than stored as NaN.
+  const amountSent = body.amount !== undefined && body.amount !== null && body.amount !== "";
+  const amountValue = amountSent ? optionalNumber(body.amount) : undefined;
+  if (amountSent && (amountValue === undefined || amountValue < 0)) {
+    return badRequest("Amount must be a valid non-negative number.");
+  }
 
   if (logType === "water") {
-    if (!customerId || !Types.ObjectId.isValid(customerId)) {
-      return NextResponse.json({ error: "Valid customer is required." }, { status: 400 });
-    }
+    if (!customerId || !Types.ObjectId.isValid(customerId)) return badRequest("Valid customer is required.");
     const quantityError = validateDeliveryQuantities(quantities);
-    if (quantityError) {
-      return NextResponse.json({ error: quantityError }, { status: 400 });
-    }
-  }
-
-  if (logType === "cash") {
-    if (amountValue === undefined || !Number.isFinite(amountValue) || amountValue < 0) {
-      return NextResponse.json({ error: "Amount must be a valid non-negative number." }, { status: 400 });
-    }
-    if (body.cashType !== "debit" && body.cashType !== "fuel") {
-      return NextResponse.json({ error: "Cash type must be debit or fuel." }, { status: 400 });
-    }
-  }
-
-  await connectToDatabase();
-
-  // An amount typed by the admin wins; otherwise cans are priced from the
-  // customer's rate and cases from the price per case entered here.
-  let calculatedAmount = amountValue;
-  if (logType === "water" && customerId && deliveredQuantity(quantities) !== undefined && calculatedAmount === undefined) {
-    const customer = await Customer.findOne({ _id: customerId, isActive: true }).lean();
-    if (!customer) {
-      return NextResponse.json({ error: "Customer not found or inactive." }, { status: 404 });
-    }
-    calculatedAmount = autoAmount(customer, quantities);
+    if (quantityError) return badRequest(quantityError);
+  } else {
+    if (amountValue === undefined) return badRequest("Amount must be a valid non-negative number.");
+    if (body.cashType !== "debit" && body.cashType !== "fuel") return badRequest("Cash type must be debit or fuel.");
   }
 
   try {
+    await connectToDatabase();
+
+    // The driver, customer and vehicle must all exist; the customer must be
+    // active. Checked together in one round trip.
+    const [driver, customer, vehicle] = await Promise.all([
+      User.exists({ _id: driverId, role: "driver" }),
+      logType === "water" && customerId
+        ? Customer.findOne({ _id: customerId, isActive: true }).select("cashPerCan").lean()
+        : Promise.resolve(null),
+      vehicleId ? Vehicle.exists({ _id: vehicleId }) : Promise.resolve(null),
+    ]);
+    if (!driver) return badRequest("Driver not found.");
+    if (logType === "water" && !customer) return notFound("Customer not found or inactive.");
+    if (vehicleId && !vehicle) return badRequest("Vehicle not found.");
+
     const payload: Record<string, unknown> = {
       driver: new Types.ObjectId(driverId),
       suppliedAt,
@@ -340,25 +312,19 @@ export async function POST(req: NextRequest) {
         if (quantities.cansDelivered !== undefined) payload.cansDelivered = quantities.cansDelivered;
         if (quantities.cansTakenBack !== undefined) payload.cansTakenBack = quantities.cansTakenBack;
       }
-      if (vehicleId && Types.ObjectId.isValid(vehicleId)) payload.vehicle = new Types.ObjectId(vehicleId);
-      if (calculatedAmount !== undefined) payload.amount = calculatedAmount;
+      if (vehicleId) payload.vehicle = new Types.ObjectId(vehicleId);
+      // An amount typed by the admin wins; otherwise cans are priced from the
+      // customer's rate and cases from the price per case entered here.
+      const amount = amountValue ?? autoAmount(customer, quantities);
+      if (amount !== undefined) payload.amount = amount;
     } else {
       payload.amount = amountValue;
       payload.cashType = body.cashType;
     }
 
     const created = await SupplyLog.create(payload);
-
-    // Populate in place instead of re-fetching the document
-    await created.populate([
-      { path: "driver", select: "name username phone" },
-      { path: "vehicle", select: "name vehicleNumber capacity" },
-      { path: "customer", select: "name phone area" },
-    ]);
-
     return NextResponse.json(created.toObject(), { status: 201 });
   } catch (err) {
-    console.error("[admin supplies POST]", err);
-    return NextResponse.json({ error: "Failed to save delivery log." }, { status: 500 });
+    return serverError(err, "Failed to save delivery log.");
   }
 }

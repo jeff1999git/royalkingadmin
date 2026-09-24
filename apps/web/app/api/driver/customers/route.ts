@@ -1,63 +1,54 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "../../../../lib/auth";
+import { badRequest, optionalNumber, optionalString, readJsonObject, requiredString, serverError, unauthorized } from "../../../../lib/api";
+import { requireDriver } from "../../../../lib/authHelpers";
+import { createOrRestoreCustomer } from "../../../../lib/customers";
 import { connectToDatabase } from "../../../../lib/mongodb";
 import Customer from "../../../../models/Customer";
 
 export async function GET() {
-  const session = await getServerSession(authOptions);
-  if (!session || session.user.role !== "driver") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const driver = await requireDriver();
+  if (!driver) return unauthorized();
+
+  try {
+    await connectToDatabase();
+    const customers = await Customer.find({ isActive: true })
+      .select("name phone area subscriptionCans cashPerCan locationType")
+      .sort({ name: 1 })
+      .lean();
+
+    return NextResponse.json(customers);
+  } catch (err) {
+    return serverError(err, "Failed to load customers.");
   }
-
-  await connectToDatabase();
-  const customers = await Customer.find({ isActive: true })
-    .select("name phone area subscriptionCans cashPerCan locationType")
-    .sort({ name: 1 })
-    .lean();
-
-  return NextResponse.json(customers);
 }
 
 export async function POST(req: NextRequest) {
-  const session = await getServerSession(authOptions);
-  if (!session || session.user.role !== "driver") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const driver = await requireDriver();
+  if (!driver) return unauthorized();
 
-  const body = (await req.json()) as {
-    name?: string;
-    phone?: string;
-    email?: string;
-    address?: string;
-    locationType?: "home" | "office" | "both";
-    cashPerCan?: number | string;
-  };
+  const body = await readJsonObject(req);
+  if (!body) return badRequest("Invalid request body.");
 
-  const name = body.name?.trim();
-  const phone = body.phone?.trim();
-  const email = body.email?.trim() || undefined;
-  const address = body.address?.trim();
+  const name = requiredString(body.name, 120);
+  const phone = requiredString(body.phone, 30);
+  const email = optionalString(body.email, 120) || undefined;
+  const address = requiredString(body.address, 500);
   const locationType = body.locationType;
-  const cashPerCanRaw = body.cashPerCan;
-  const cashPerCan = cashPerCanRaw !== undefined && cashPerCanRaw !== "" ? Number(cashPerCanRaw) : undefined;
+  const cashPerCanSent = body.cashPerCan !== undefined && body.cashPerCan !== null && body.cashPerCan !== "";
+  const cashPerCan = cashPerCanSent ? optionalNumber(body.cashPerCan) : undefined;
 
-  if (!name) return NextResponse.json({ error: "Name is required." }, { status: 400 });
-  if (!phone) return NextResponse.json({ error: "Phone is required." }, { status: 400 });
-  if (!address) return NextResponse.json({ error: "Location is required." }, { status: 400 });
-  if (cashPerCan === undefined) {
-    return NextResponse.json({ error: "Cash per can is required." }, { status: 400 });
-  }
-  if (isNaN(cashPerCan) || cashPerCan < 0) {
-    return NextResponse.json({ error: "Cash per can must be a non-negative number." }, { status: 400 });
-  }
-  if (locationType && locationType !== "home" && locationType !== "office" && locationType !== "both") {
-    return NextResponse.json({ error: "Location type must be home, office, or both." }, { status: 400 });
+  if (!name) return badRequest("Name is required.");
+  if (!phone) return badRequest("Phone is required.");
+  if (!address) return badRequest("Location is required.");
+  if (!cashPerCanSent) return badRequest("Cash per can is required.");
+  if (cashPerCan === undefined || cashPerCan < 0) return badRequest("Cash per can must be a non-negative number.");
+  if (locationType !== undefined && locationType !== "home" && locationType !== "office" && locationType !== "both") {
+    return badRequest("Location type must be home, office, or both.");
   }
 
-  await connectToDatabase();
   try {
-    const customer = await Customer.create({
+    await connectToDatabase();
+    const result = await createOrRestoreCustomer({
       name,
       phone,
       email,
@@ -66,13 +57,13 @@ export async function POST(req: NextRequest) {
       subscriptionCans: 1,
       cashPerCan,
       registeredDate: new Date(),
-      createdBy: session.user.id,
+      createdBy: driver.id,
     });
-    return NextResponse.json(customer, { status: 201 });
-  } catch (err: unknown) {
-    if (err && typeof err === "object" && "code" in err && (err as { code: number }).code === 11000) {
+    if ("duplicate" in result) {
       return NextResponse.json({ error: "A customer with this phone number already exists." }, { status: 409 });
     }
-    throw err;
+    return NextResponse.json(result.customer, { status: 201 });
+  } catch (err) {
+    return serverError(err, "Failed to register the customer.");
   }
 }

@@ -1,22 +1,25 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import Link from "next/link";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import {
+  locationTypeLabel,
   useAdminDrivers,
   useAdminNewCustomers,
   useAdminVehicles,
+  type Driver,
   type NewCustomer,
+  type Vehicle,
 } from "../../hooks/useAdminQueries";
+import { istDayKey, istToday } from "../../../lib/format";
+import { useEscapeKey } from "../../hooks/useEscapeKey";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface DailyDelivery { date: string; count: number; totalCans: number; totalCases: number; }
 interface DailyRegistration { date: string; count: number; }
 interface AnalyticsData { deliveries: DailyDelivery[]; registrations: DailyRegistration[]; }
-interface Driver { _id: string; name: string; username: string; }
-interface VehicleItem { _id: string; name: string; vehicleNumber: string; }
 
 interface FilterState {
   dateMode: "quick" | "custom";
@@ -270,16 +273,11 @@ function StatCard({
 // Analytics days are IST days, so show dates in IST whatever the device timezone.
 const IST_DATE = new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", year: "numeric" });
 const IST_TIME = new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", hour: "numeric", minute: "2-digit", hour12: true });
-const IST_DAY_KEY = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }); // YYYY-MM-DD
 
 function formatIst(formatter: Intl.DateTimeFormat, iso?: string): string {
   if (!iso) return "";
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? "" : formatter.format(d);
-}
-
-function locationLabel(lt?: NewCustomer["locationType"]): string {
-  return lt === "home" ? "Home" : lt === "office" ? "Office" : lt === "both" ? "Home & Office" : "";
 }
 
 function addedByLabel(addedBy: NewCustomer["addedBy"]): string {
@@ -289,14 +287,14 @@ function addedByLabel(addedBy: NewCustomer["addedBy"]): string {
 }
 
 function NewCustomerRow({ customer }: { customer: NewCustomer }) {
-  const addedDay = formatIst(IST_DAY_KEY, customer.createdAt);
-  const registeredDay = formatIst(IST_DAY_KEY, customer.registeredDate);
+  const addedDay = istDayKey(customer.createdAt);
+  const registeredDay = customer.registeredDate ? istDayKey(customer.registeredDate) : "";
   // The admin can set a different "Added Date" on the customer form; the
   // analytics count uses the day the record was actually created.
   const showRegistered = Boolean(registeredDay && registeredDay !== addedDay);
 
   const details = [
-    locationLabel(customer.locationType),
+    locationTypeLabel(customer.locationType) ?? "",
     `${customer.subscriptionCans} can${customer.subscriptionCans === 1 ? "" : "s"}/day`,
     customer.cashPerCan !== undefined ? `₹${customer.cashPerCan}/can` : "",
   ].filter(Boolean);
@@ -350,13 +348,7 @@ function NewCustomersModal({
 }) {
   const { data, isLoading, isError, refetch, isFetching } = useAdminNewCustomers(rangeQuery);
 
-  useEffect(() => {
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
-    }
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [onClose]);
+  useEscapeKey(onClose);
 
   const customers = data?.customers ?? [];
   const total = data?.total ?? 0;
@@ -509,9 +501,12 @@ function FilterModal({
   onApply: () => void;
   onClose: () => void;
   drivers: Driver[];
-  vehicles: VehicleItem[];
+  vehicles: Vehicle[];
 }) {
-  const today = new Date().toISOString().slice(0, 10);
+  // Analytics days are IST days, so the pickers allow the current IST day.
+  const today = istToday();
+
+  useEscapeKey(onClose);
 
   const canApply = draft.dateMode === "quick" || (draft.dateMode === "custom" && !!draft.from && !!draft.to);
 
@@ -520,19 +515,24 @@ function FilterModal({
       style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 200, display: "flex", alignItems: "flex-end", justifyContent: "center" }}
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div style={{
-        background: "#fff",
-        borderRadius: "20px 20px 0 0",
-        width: "100%",
-        maxWidth: "520px",
-        padding: "1.5rem 1.5rem 2rem",
-        maxHeight: "88vh",
-        overflowY: "auto",
-      }}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="filters-title"
+        style={{
+          background: "#fff",
+          borderRadius: "20px 20px 0 0",
+          width: "100%",
+          maxWidth: "520px",
+          padding: "1.5rem 1.5rem 2rem",
+          maxHeight: "88vh",
+          overflowY: "auto",
+        }}
+      >
         {/* Modal header */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1.5rem" }}>
-          <span style={{ fontWeight: 800, fontSize: "1.1rem", color: "var(--text-primary)" }}>Filters</span>
-          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", padding: "0.25rem", color: "var(--text-muted)", display: "flex" }}>
+          <span id="filters-title" style={{ fontWeight: 800, fontSize: "1.1rem", color: "var(--text-primary)" }}>Filters</span>
+          <button type="button" onClick={onClose} aria-label="Close" style={{ background: "none", border: "none", cursor: "pointer", padding: "0.25rem", color: "var(--text-muted)", display: "flex" }}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
               <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
             </svg>
@@ -726,18 +726,22 @@ export default function AnalyticsPage() {
   const { data: driversData } = useAdminDrivers();
   const { data: vehiclesData } = useAdminVehicles();
   const drivers = useMemo<Driver[]>(() => driversData ?? [], [driversData]);
-  const vehicles = useMemo<VehicleItem[]>(() => vehiclesData ?? [], [vehiclesData]);
+  const vehicles = useMemo<Vehicle[]>(() => vehiclesData ?? [], [vehiclesData]);
 
+  // Keyed on the request itself: from/to left over from a custom range are
+  // ignored in quick mode, so they must not make a second cache entry.
+  const analyticsQuery = buildQuery(filters);
   const {
     data,
     isLoading: loading,
+    isFetching,
     isError,
   } = useQuery<AnalyticsData>({
-    queryKey: ["admin", "analytics", filters],
+    queryKey: ["admin", "analytics", analyticsQuery],
     staleTime: 1000 * 60 * 2,
     placeholderData: keepPreviousData,
     queryFn: async () => {
-      const res = await fetch(`/api/admin/analytics?${buildQuery(filters)}`, { cache: "no-store" });
+      const res = await fetch(`/api/admin/analytics?${analyticsQuery}`, { cache: "no-store" });
       if (!res.ok) throw new Error("Failed to load analytics");
       return (await res.json()) as AnalyticsData;
     },
@@ -883,7 +887,8 @@ export default function AnalyticsPage() {
           .stat-card-action { font-size: 0.6rem; }
         }
       ` }} />
-      <div className="stat-cards-row">
+      {/* Dimmed while a new period or filter loads: the previous totals stay up until then */}
+      <div className="stat-cards-row" style={{ opacity: isFetching ? 0.6 : 1 }} aria-busy={isFetching}>
         <StatCard label="Total Deliveries" value={totals.deliveries} accent="var(--accent-primary)" />
         <StatCard label="Total Cans Delivered" value={totals.cans} accent="#0ea5e9" />
         <StatCard label="Total Cases Delivered" value={totals.cases} accent="#d97706" />

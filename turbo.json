@@ -4,6 +4,7 @@
   "globalEnv": [
     "MONGODB_URI",
     "NEXTAUTH_SECRET",
+    "NEXTAUTH_URL",
     "CLOUDINARY_URL",
     "ADMIN_USERNAME",
     "ADMIN_PASSWORD",

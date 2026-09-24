@@ -1,11 +1,31 @@
 "use client";
 
-import { signOut, useSession } from "next-auth/react";
+import { SessionProvider, signOut, useSession } from "next-auth/react";
 import type { FormEvent, ReactNode } from "react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { formatShortDate } from "../../lib/format";
+import StockModal from "../components/StockModal";
+import { useEscapeKey } from "../hooks/useEscapeKey";
 
-export default function DriverLayout({ children }: { children: ReactNode }) {
-    const { data: session, status } = useSession();
+type OdometerResponse = {
+  hasVehicle?: boolean;
+  filledToday?: boolean;
+  history?: { reading: number; recordedAt: string }[];
+  error?: string;
+};
+
+// A signed-out or deactivated driver gets 401 from every API; send them to
+// the login page instead of leaving a dead screen.
+function handleUnauthorized(res: Response) {
+  if (res.status === 401) {
+    void signOut({ callbackUrl: "/login" });
+    return true;
+  }
+  return false;
+}
+
+function DriverShell({ children }: { children: ReactNode }) {
+    const { data: session } = useSession();
     const [dropdownOpen, setDropdownOpen] = useState(false);
 
     // Odometer state
@@ -19,30 +39,26 @@ export default function DriverLayout({ children }: { children: ReactNode }) {
     const [historyLoading, setHistoryLoading] = useState(false);
     const [odometerFilledToday, setOdometerFilledToday] = useState(false);
 
-    // Stock modal state
     const [stockOpen, setStockOpen] = useState(false);
-    const [stockLoading, setStockLoading] = useState(false);
-    const [stockSaving, setStockSaving] = useState(false);
-    const [stockError, setStockError] = useState("");
-    const [stockSuccess, setStockSuccess] = useState("");
-    const [stockValues, setStockValues] = useState({ cans: 0, dispensers: 0, stands: 0 });
-    const [stockUpdatedBy, setStockUpdatedBy] = useState<string | null>(null);
-    const [stockUpdatedAt, setStockUpdatedAt] = useState<string | null>(null);
 
     const dropdownRef = useRef<HTMLDivElement>(null);
 
     const driverName = session?.user?.name ?? "";
     const initial = driverName.charAt(0).toUpperCase() || "D";
 
-    // Check if odometer was filled today, once session is ready
+    // Daily odometer gate. Runs straight away on open: the proxy only lets a
+    // signed-in driver reach this page and the API checks the session itself,
+    // so there is no need to wait for the client session first. The page is
+    // never left blocked if the check fails or times out.
     useEffect(() => {
-        if (status !== "authenticated") return;
-
+        let cancelled = false;
         void (async () => {
             try {
-                const res = await fetch("/api/driver/vehicles/odometer", { cache: "no-store" });
+                const res = await fetch("/api/driver/vehicles/odometer", { cache: "no-store", signal: AbortSignal.timeout(10000) });
+                if (cancelled) return;
+                if (handleUnauthorized(res)) return;
                 if (res.ok) {
-                    const data = (await res.json()) as { filledToday: boolean; hasVehicle?: boolean };
+                    const data = (await res.json()) as OdometerResponse;
                     // Only gate drivers who actually have a vehicle — without one
                     // the reading can never be submitted, so blocking would lock
                     // the driver out of the whole app.
@@ -51,15 +67,17 @@ export default function DriverLayout({ children }: { children: ReactNode }) {
                     }
                 }
             } catch {
-                // silently ignore — don't block the driver on network error
+                // Network error or timeout: don't block the driver.
             } finally {
-                setOdometerChecking(false);
+                if (!cancelled) setOdometerChecking(false);
             }
         })();
-    }, [status]);
+        return () => { cancelled = true; };
+    }, []);
 
     // Close dropdown on outside click
     useEffect(() => {
+        if (!dropdownOpen) return;
         function handler(e: MouseEvent) {
             if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
                 setDropdownOpen(false);
@@ -67,50 +85,35 @@ export default function DriverLayout({ children }: { children: ReactNode }) {
         }
         document.addEventListener("mousedown", handler);
         return () => document.removeEventListener("mousedown", handler);
+    }, [dropdownOpen]);
+
+    const closeOdometerModal = useCallback(() => {
+        setOdometerOpen(false);
+        setOdometerError("");
     }, []);
+    // Escape closes the voluntary odometer dialog, never the blocking one.
+    useEscapeKey(closeOdometerModal, odometerOpen && !odometerRequired);
 
-    async function openStockModal() {
-        setStockOpen(true);
-        setStockLoading(true);
-        setStockError("");
-        setStockSuccess("");
+    async function openOdometerModal() {
+        setDropdownOpen(false);
+        setOdometerError("");
+        setOdometerHistory([]);
+        setOdometerOpen(true);
+        setHistoryLoading(true);
         try {
-            const res = await fetch("/api/stock", { cache: "no-store" });
-            const data = (await res.json()) as { cans?: number; dispensers?: number; stands?: number; updatedBy?: string; updatedAt?: string };
-            setStockValues({ cans: data.cans ?? 0, dispensers: data.dispensers ?? 0, stands: data.stands ?? 0 });
-            setStockUpdatedBy(data.updatedBy ?? null);
-            setStockUpdatedAt(data.updatedAt ?? null);
-        } catch {
-            setStockError("Failed to load stock.");
-        } finally {
-            setStockLoading(false);
-        }
-    }
-
-    async function saveStock() {
-        setStockSaving(true);
-        setStockError("");
-        setStockSuccess("");
-        try {
-            const res = await fetch("/api/stock", {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(stockValues),
-            });
-            const data = (await res.json()) as { cans?: number; dispensers?: number; stands?: number; updatedBy?: string; updatedAt?: string; error?: string };
+            const res = await fetch("/api/driver/vehicles/odometer", { cache: "no-store" });
+            if (handleUnauthorized(res)) return;
+            const data = (await res.json().catch(() => ({}))) as OdometerResponse;
             if (!res.ok) {
-                setStockError(data.error ?? "Failed to save stock.");
-            } else {
-                setStockValues({ cans: data.cans ?? 0, dispensers: data.dispensers ?? 0, stands: data.stands ?? 0 });
-                setStockUpdatedBy(data.updatedBy ?? null);
-                setStockUpdatedAt(data.updatedAt ?? null);
-                setStockSuccess("Stock updated.");
-                setTimeout(() => setStockSuccess(""), 2500);
+                setOdometerError(data.error ?? "Failed to load odometer entries.");
+                return;
             }
+            setOdometerFilledToday(data.filledToday ?? false);
+            setOdometerHistory(data.history ?? []);
         } catch {
-            setStockError("Failed to save stock.");
+            setOdometerError("Failed to load odometer entries. Please check your connection.");
         } finally {
-            setStockSaving(false);
+            setHistoryLoading(false);
         }
     }
 
@@ -129,11 +132,9 @@ export default function DriverLayout({ children }: { children: ReactNode }) {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ odometer: Number(odometerValue) }),
             });
+            if (handleUnauthorized(res)) return;
 
-            let data: { error?: string } = {};
-            try { data = (await res.json()) as { error?: string }; } catch { /* ignore */ }
-            setOdometerSubmitting(false);
-
+            const data = (await res.json().catch(() => ({}))) as { error?: string };
             if (!res.ok) {
                 setOdometerError(data.error ?? "Failed to update odometer.");
                 return;
@@ -144,8 +145,9 @@ export default function DriverLayout({ children }: { children: ReactNode }) {
             setOdometerOpen(false);
             setOdometerValue("");
         } catch {
-            setOdometerSubmitting(false);
             setOdometerError("Network error. Please check your connection and try again.");
+        } finally {
+            setOdometerSubmitting(false);
         }
     }
 
@@ -190,6 +192,8 @@ export default function DriverLayout({ children }: { children: ReactNode }) {
                     <button
                         type="button"
                         onClick={() => setDropdownOpen((o) => !o)}
+                        aria-expanded={dropdownOpen}
+                        aria-haspopup="menu"
                         style={{
                             width: "40px", height: "40px", borderRadius: "50%",
                             background: "#ffffff", color: "var(--accent-primary)",
@@ -205,7 +209,7 @@ export default function DriverLayout({ children }: { children: ReactNode }) {
                     </button>
 
                     {dropdownOpen && (
-                        <div style={{
+                        <div role="menu" style={{
                             position: "absolute", top: "calc(100% + 8px)", right: 0,
                             background: "#ffffff", border: "1px solid var(--border)",
                             borderRadius: "10px", boxShadow: "0 8px 24px rgba(0,0,0,0.14)",
@@ -236,20 +240,8 @@ export default function DriverLayout({ children }: { children: ReactNode }) {
                             {/* Odometer option */}
                             <button
                                 type="button"
-                                onClick={() => {
-                                    setDropdownOpen(false);
-                                    setOdometerError("");
-                                    setOdometerHistory([]);
-                                    setOdometerOpen(true);
-                                    setHistoryLoading(true);
-                                    void fetch("/api/driver/vehicles/odometer", { cache: "no-store" })
-                                        .then((r) => r.json())
-                                        .then((d: { filledToday?: boolean; history?: { reading: number; recordedAt: string }[] }) => {
-                                            setOdometerFilledToday(d.filledToday ?? false);
-                                            setOdometerHistory(d.history ?? []);
-                                        })
-                                        .finally(() => setHistoryLoading(false));
-                                }}
+                                role="menuitem"
+                                onClick={() => void openOdometerModal()}
                                 style={{
                                     display: "flex", alignItems: "center", gap: "0.6rem",
                                     width: "100%", padding: "0.7rem 1rem",
@@ -269,7 +261,8 @@ export default function DriverLayout({ children }: { children: ReactNode }) {
                             {/* Stock option */}
                             <button
                                 type="button"
-                                onClick={() => { setDropdownOpen(false); void openStockModal(); }}
+                                role="menuitem"
+                                onClick={() => { setDropdownOpen(false); setStockOpen(true); }}
                                 style={{
                                     display: "flex", alignItems: "center", gap: "0.6rem",
                                     width: "100%", padding: "0.7rem 1rem",
@@ -290,6 +283,7 @@ export default function DriverLayout({ children }: { children: ReactNode }) {
                             {/* Sign out option */}
                             <button
                                 type="button"
+                                role="menuitem"
                                 onClick={() => { setDropdownOpen(false); void handleSignOut(); }}
                                 style={{
                                     display: "flex", alignItems: "center", gap: "0.6rem",
@@ -307,12 +301,15 @@ export default function DriverLayout({ children }: { children: ReactNode }) {
                                 </svg>
                                 Sign Out
                             </button>
+                            <div style={{ padding: "0.3rem 1rem 0.6rem", fontSize: "0.72rem", color: "#94a3b8", fontWeight: 500 }}>
+                                v{process.env.NEXT_PUBLIC_APP_VERSION}
+                            </div>
                         </div>
                     )}
                 </div>
             </header>
 
-            {/* Main content — blurred/blocked until odometer check done */}
+            {/* Main content — blurred/blocked until the daily odometer check is done */}
             <main style={{
                 padding: "1.5rem", maxWidth: "100%", margin: "0 auto",
                 ...(odometerChecking || odometerRequired
@@ -322,78 +319,7 @@ export default function DriverLayout({ children }: { children: ReactNode }) {
                 {children}
             </main>
 
-            {/* Stock modal */}
-            {stockOpen && (
-                <div
-                    style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem", zIndex: 300 }}
-                    onClick={() => { setStockOpen(false); setStockError(""); setStockSuccess(""); }}
-                >
-                    <div className="card" style={{ width: "100%", maxWidth: "360px" }} onClick={(e) => e.stopPropagation()}>
-                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1.25rem" }}>
-                            <h3 style={{ margin: 0 }}>Stock</h3>
-                            <button type="button" className="btn btn-sm btn-secondary" onClick={() => { setStockOpen(false); setStockError(""); setStockSuccess(""); }}>
-                                Close
-                            </button>
-                        </div>
-
-                        {stockLoading ? (
-                            <div style={{ color: "var(--text-muted)", fontSize: "0.9rem", textAlign: "center", padding: "1rem 0" }}>Loading...</div>
-                        ) : (
-                            <>
-                                {(["cans", "dispensers", "stands"] as const).map((key) => (
-                                    <div key={key} style={{ marginBottom: "1rem" }}>
-                                        <div className="form-label" style={{ marginBottom: "0.4rem", textTransform: "capitalize" }}>{key}</div>
-                                        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                                            <button
-                                                type="button"
-                                                className="btn btn-secondary btn-sm"
-                                                style={{ width: "36px", flexShrink: 0 }}
-                                                onClick={() => setStockValues((v) => ({ ...v, [key]: Math.max(0, v[key] - 1) }))}
-                                            >
-                                                –
-                                            </button>
-                                            <input
-                                                className="form-input"
-                                                type="number"
-                                                min="0"
-                                                step="1"
-                                                value={stockValues[key]}
-                                                onChange={(e) => {
-                                                    const parsed = parseInt(e.target.value, 10);
-                                                    setStockValues((v) => ({ ...v, [key]: Number.isNaN(parsed) ? 0 : Math.max(0, parsed) }));
-                                                }}
-                                                style={{ textAlign: "center", width: "80px" }}
-                                            />
-                                            <button
-                                                type="button"
-                                                className="btn btn-secondary btn-sm"
-                                                style={{ width: "36px", flexShrink: 0 }}
-                                                onClick={() => setStockValues((v) => ({ ...v, [key]: v[key] + 1 }))}
-                                            >
-                                                +
-                                            </button>
-                                        </div>
-                                    </div>
-                                ))}
-
-                                {stockUpdatedAt && (
-                                    <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "1rem" }}>
-                                        Last updated: {new Date(stockUpdatedAt).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}
-                                        {stockUpdatedBy ? ` · by ${stockUpdatedBy}` : ""}
-                                    </div>
-                                )}
-
-                                {stockError && <div className="alert alert-error" style={{ marginBottom: "0.75rem" }}>{stockError}</div>}
-                                {stockSuccess && <div className="alert alert-success" style={{ marginBottom: "0.75rem" }}>{stockSuccess}</div>}
-
-                                <button type="button" className="btn btn-primary btn-full" onClick={() => void saveStock()} disabled={stockSaving}>
-                                    {stockSaving ? "Saving..." : "Save Changes"}
-                                </button>
-                            </>
-                        )}
-                    </div>
-                </div>
-            )}
+            {stockOpen && <StockModal onClose={() => setStockOpen(false)} />}
 
             {/* Odometer modal */}
             {showOdometerModal && (
@@ -404,23 +330,26 @@ export default function DriverLayout({ children }: { children: ReactNode }) {
                         display: "flex", alignItems: "center", justifyContent: "center",
                         padding: "1rem", zIndex: 300,
                     }}
-                    onClick={isBlocking ? undefined : () => { setOdometerOpen(false); setOdometerError(""); }}
+                    onClick={isBlocking ? undefined : closeOdometerModal}
                 >
                     <div
                         className="card"
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="odometerDialogTitle"
                         style={{ width: "100%", maxWidth: "380px" }}
                         onClick={(e) => e.stopPropagation()}
                     >
                         <div style={{ marginBottom: "1.25rem" }}>
                             <div className="flex items-center justify-between">
-                                <h3 style={{ margin: 0 }}>
+                                <h3 id="odometerDialogTitle" style={{ margin: 0 }}>
                                     {isBlocking ? "Today's Odometer Reading" : "Update Odometer"}
                                 </h3>
                                 {!isBlocking && (
                                     <button
                                         type="button"
                                         className="btn btn-sm btn-secondary"
-                                        onClick={() => { setOdometerOpen(false); setOdometerError(""); }}
+                                        onClick={closeOdometerModal}
                                     >
                                         Close
                                     </button>
@@ -446,7 +375,7 @@ export default function DriverLayout({ children }: { children: ReactNode }) {
                                 ) : (
                                     <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem", marginBottom: "1.25rem" }}>
                                         {odometerHistory.map((entry, i) => (
-                                            <div key={i} style={{
+                                            <div key={`${entry.recordedAt}-${i}`} style={{
                                                 display: "flex", justifyContent: "space-between", alignItems: "center",
                                                 padding: "0.5rem 0.75rem",
                                                 background: i === 0 && odometerFilledToday ? "#f0fdf4" : "var(--bg-secondary)",
@@ -455,7 +384,7 @@ export default function DriverLayout({ children }: { children: ReactNode }) {
                                                 fontSize: "0.85rem",
                                             }}>
                                                 <span style={{ fontWeight: 700, color: "var(--text-primary)" }}>
-                                                    {entry.reading.toLocaleString()} km
+                                                    {entry.reading.toLocaleString("en-IN")} km
                                                 </span>
                                                 <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
                                                     {i === 0 && odometerFilledToday && (
@@ -464,7 +393,7 @@ export default function DriverLayout({ children }: { children: ReactNode }) {
                                                         </span>
                                                     )}
                                                     <span style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>
-                                                        {new Date(entry.recordedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
+                                                        {formatShortDate(entry.recordedAt)}
                                                     </span>
                                                 </div>
                                             </div>
@@ -481,10 +410,12 @@ export default function DriverLayout({ children }: { children: ReactNode }) {
                                         <div style={{ borderTop: "1px solid var(--border)", marginBottom: "1rem" }} />
                                         <form onSubmit={(e) => void handleOdometerSubmit(e)}>
                                             <div className="form-group" style={{ marginBottom: "1rem" }}>
-                                                <label className="form-label">Today&apos;s Reading (km)</label>
+                                                <label className="form-label" htmlFor="odometerReading">Today&apos;s Reading (km)</label>
                                                 <input
+                                                    id="odometerReading"
                                                     className="form-input"
                                                     type="number"
+                                                    inputMode="numeric"
                                                     min="0"
                                                     step="1"
                                                     value={odometerValue}
@@ -505,6 +436,9 @@ export default function DriverLayout({ children }: { children: ReactNode }) {
                                         </form>
                                     </>
                                 )}
+                                {odometerFilledToday && odometerError && (
+                                    <div className="alert alert-error" style={{ marginTop: "0.75rem" }}>{odometerError}</div>
+                                )}
                             </>
                         )}
 
@@ -512,10 +446,12 @@ export default function DriverLayout({ children }: { children: ReactNode }) {
                         {isBlocking && (
                             <form onSubmit={(e) => void handleOdometerSubmit(e)}>
                                 <div className="form-group" style={{ marginBottom: "1rem" }}>
-                                    <label className="form-label">Current Reading (km)</label>
+                                    <label className="form-label" htmlFor="odometerReadingRequired">Current Reading (km)</label>
                                     <input
+                                        id="odometerReadingRequired"
                                         className="form-input"
                                         type="number"
+                                        inputMode="numeric"
                                         min="0"
                                         step="1"
                                         value={odometerValue}
@@ -539,5 +475,16 @@ export default function DriverLayout({ children }: { children: ReactNode }) {
                 </div>
             )}
         </div>
+    );
+}
+
+// The session provider lives here (and in the admin layout) rather than in
+// the root layout, so the home and login pages render without a session
+// request. Focus refetches are off: the API answers 401 if a session expires.
+export default function DriverLayout({ children }: { children: ReactNode }) {
+    return (
+        <SessionProvider refetchOnWindowFocus={false}>
+            <DriverShell>{children}</DriverShell>
+        </SessionProvider>
     );
 }

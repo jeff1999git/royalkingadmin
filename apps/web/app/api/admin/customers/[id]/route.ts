@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Types } from "mongoose";
-import { getServerSession } from "next-auth";
-import { authOptions } from "../../../../../lib/auth";
+import { badRequest, jsonError, notFound, optionalNumber, optionalString, readJsonObject, serverError, unauthorized } from "../../../../../lib/api";
+import { requireAdmin } from "../../../../../lib/authHelpers";
 import { connectToDatabase } from "../../../../../lib/mongodb";
 import Customer from "../../../../../models/Customer";
 
@@ -9,92 +9,76 @@ export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const session = await getServerSession(authOptions);
-  if (!session || session.user.role !== "admin") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const admin = await requireAdmin();
+  if (!admin) return unauthorized();
 
   const { id } = await params;
-  if (!Types.ObjectId.isValid(id)) {
-    return NextResponse.json({ error: "Invalid customer id." }, { status: 400 });
-  }
+  if (!Types.ObjectId.isValid(id)) return badRequest("Invalid customer id.");
 
-  await connectToDatabase();
-  const customer = await Customer.findById(id).lean();
-  if (!customer) {
-    return NextResponse.json({ error: "Customer not found." }, { status: 404 });
-  }
+  try {
+    await connectToDatabase();
+    const customer = await Customer.findById(id).lean();
+    if (!customer) return notFound("Customer not found.");
 
-  return NextResponse.json(customer);
+    return NextResponse.json(customer);
+  } catch (err) {
+    return serverError(err);
+  }
 }
 
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const session = await getServerSession(authOptions);
-  if (!session || session.user.role !== "admin") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const admin = await requireAdmin();
+  if (!admin) return unauthorized();
 
   const { id } = await params;
-  if (!Types.ObjectId.isValid(id)) {
-    return NextResponse.json({ error: "Invalid customer id." }, { status: 400 });
-  }
+  if (!Types.ObjectId.isValid(id)) return badRequest("Invalid customer id.");
 
-  const body = (await req.json()) as {
-    name?: string;
-    phone?: string;
-    email?: string;
-    address?: string;
-    area?: string;
-    locationType?: "home" | "office" | "both" | "";
-    subscriptionCans?: number | string;
-    cashPerCan?: number | string | null;
-    securityDeposit?: number | string | null;
-    isActive?: boolean;
-    registeredDate?: string;
-  };
+  const body = await readJsonObject(req);
+  if (!body) return badRequest("Invalid request body.");
 
   const setPayload: Record<string, unknown> = {};
   const unsetPayload: Record<string, 1> = {};
 
   if (body.name !== undefined) {
-    const name = body.name.trim();
-    if (!name) return NextResponse.json({ error: "Name cannot be empty." }, { status: 400 });
+    const name = optionalString(body.name, 200);
+    if (!name) return badRequest("Name cannot be empty.");
     setPayload.name = name;
   }
   if (body.phone !== undefined) {
-    const phone = body.phone.trim();
-    if (!phone) return NextResponse.json({ error: "Phone cannot be empty." }, { status: 400 });
+    const phone = optionalString(body.phone, 30);
+    if (!phone) return badRequest("Phone cannot be empty.");
     setPayload.phone = phone;
   }
   if (body.email !== undefined) {
-    const email = body.email.trim();
+    const email = optionalString(body.email, 200);
     if (email) setPayload.email = email;
     else unsetPayload.email = 1;
   }
   if (body.address !== undefined) {
-    const address = body.address.trim();
-    if (!address) return NextResponse.json({ error: "Location cannot be empty." }, { status: 400 });
+    const address = optionalString(body.address, 1000);
+    if (!address) return badRequest("Location cannot be empty.");
     setPayload.address = address;
   }
   if (body.area !== undefined) {
-    const area = body.area.trim();
+    const area = optionalString(body.area, 200);
     if (area) setPayload.area = area;
     else unsetPayload.area = 1;
   }
   if (body.locationType !== undefined) {
-    if (body.locationType && body.locationType !== "home" && body.locationType !== "office" && body.locationType !== "both") {
-      return NextResponse.json({ error: "Location type must be home, office, or both." }, { status: 400 });
+    const locationType = body.locationType;
+    if (locationType && locationType !== "home" && locationType !== "office" && locationType !== "both") {
+      return badRequest("Location type must be home, office, or both.");
     }
-    if (body.locationType) setPayload.locationType = body.locationType;
+    if (locationType) setPayload.locationType = locationType;
     else unsetPayload.locationType = 1;
   }
   if (body.subscriptionCans !== undefined) {
-    const cans = Number(body.subscriptionCans);
-    if (!Number.isInteger(cans) || cans < 1) {
-      return NextResponse.json({ error: "Subscription cans must be a positive integer." }, { status: 400 });
+    const cans = optionalNumber(body.subscriptionCans);
+    if (cans === undefined || !Number.isInteger(cans) || cans < 1) {
+      return badRequest("Subscription cans must be a positive integer.");
     }
     setPayload.subscriptionCans = cans;
   }
@@ -102,9 +86,9 @@ export async function PATCH(
     if (body.cashPerCan === null || body.cashPerCan === "") {
       unsetPayload.cashPerCan = 1;
     } else {
-      const cashPerCan = Number(body.cashPerCan);
-      if (isNaN(cashPerCan) || cashPerCan < 0) {
-        return NextResponse.json({ error: "Cash per can must be a non-negative number." }, { status: 400 });
+      const cashPerCan = optionalNumber(body.cashPerCan);
+      if (cashPerCan === undefined || cashPerCan < 0) {
+        return badRequest("Cash per can must be a non-negative number.");
       }
       setPayload.cashPerCan = cashPerCan;
     }
@@ -113,30 +97,26 @@ export async function PATCH(
     if (body.securityDeposit === null || body.securityDeposit === "") {
       unsetPayload.securityDeposit = 1;
     } else {
-      const securityDeposit = Number(body.securityDeposit);
-      if (isNaN(securityDeposit) || securityDeposit < 0) {
-        return NextResponse.json({ error: "Security deposit must be a non-negative number." }, { status: 400 });
+      const securityDeposit = optionalNumber(body.securityDeposit);
+      if (securityDeposit === undefined || securityDeposit < 0) {
+        return badRequest("Security deposit must be a non-negative number.");
       }
       setPayload.securityDeposit = securityDeposit;
     }
   }
   if (body.isActive !== undefined) setPayload.isActive = Boolean(body.isActive);
   if (body.registeredDate !== undefined) {
-    const d = new Date(body.registeredDate);
-    if (isNaN(d.getTime())) {
-      return NextResponse.json({ error: "Invalid registered date." }, { status: 400 });
-    }
+    const d = new Date(typeof body.registeredDate === "string" ? body.registeredDate : NaN);
+    if (Number.isNaN(d.getTime())) return badRequest("Invalid registered date.");
     setPayload.registeredDate = d;
   }
 
   const hasSet = Object.keys(setPayload).length > 0;
   const hasUnset = Object.keys(unsetPayload).length > 0;
-  if (!hasSet && !hasUnset) {
-    return NextResponse.json({ error: "Nothing to update." }, { status: 400 });
-  }
+  if (!hasSet && !hasUnset) return badRequest("Nothing to update.");
 
-  await connectToDatabase();
   try {
+    await connectToDatabase();
     const updateOp: Record<string, unknown> = {};
     if (hasSet) updateOp.$set = setPayload;
     if (hasUnset) updateOp.$unset = unsetPayload;
@@ -144,19 +124,17 @@ export async function PATCH(
     const updated = await Customer.findByIdAndUpdate(
       id,
       updateOp,
-      { new: true }
+      { returnDocument: "after" }
     ).lean();
 
-    if (!updated) {
-      return NextResponse.json({ error: "Customer not found." }, { status: 404 });
-    }
+    if (!updated) return notFound("Customer not found.");
 
     return NextResponse.json(updated);
   } catch (err: unknown) {
     if (err && typeof err === "object" && "code" in err && (err as { code: number }).code === 11000) {
-      return NextResponse.json({ error: "A customer with this phone number already exists." }, { status: 409 });
+      return jsonError("A customer with this phone number already exists.", 409);
     }
-    throw err;
+    return serverError(err);
   }
 }
 
@@ -164,25 +142,23 @@ export async function DELETE(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const session = await getServerSession(authOptions);
-  if (!session || session.user.role !== "admin") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const admin = await requireAdmin();
+  if (!admin) return unauthorized();
 
   const { id } = await params;
-  if (!Types.ObjectId.isValid(id)) {
-    return NextResponse.json({ error: "Invalid customer id." }, { status: 400 });
-  }
+  if (!Types.ObjectId.isValid(id)) return badRequest("Invalid customer id.");
 
-  await connectToDatabase();
-  const updated = await Customer.findByIdAndUpdate(
-    id,
-    { $set: { isDeleted: true, isActive: false } },
-    { new: true }
-  ).lean();
-  if (!updated) {
-    return NextResponse.json({ error: "Customer not found." }, { status: 404 });
-  }
+  try {
+    await connectToDatabase();
+    const updated = await Customer.findByIdAndUpdate(
+      id,
+      { $set: { isDeleted: true, isActive: false } },
+      { returnDocument: "after" }
+    ).select("_id").lean();
+    if (!updated) return notFound("Customer not found.");
 
-  return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true });
+  } catch (err) {
+    return serverError(err);
+  }
 }

@@ -1,8 +1,10 @@
 "use client";
 
 /* eslint-disable @next/next/no-img-element */
-import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, FormEvent, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { signOut } from "next-auth/react";
+import { formatDateTime, formatMoney, istDayKey, istToday, relativeDayLabel } from "../../lib/format";
 import { cloudinaryAuto, cloudinaryThumb } from "../../lib/imageUrl";
 import {
   CASE_SIZES,
@@ -16,6 +18,7 @@ import {
   type DeliveryQuantities,
   type ProductType,
 } from "../../lib/supplyProduct";
+import { useEscapeKey } from "../hooks/useEscapeKey";
 
 interface Vehicle {
   _id: string;
@@ -46,7 +49,6 @@ interface DeliveryOption {
 interface DeliveryLog {
   _id: string;
   suppliedAt: string;
-  formattedSuppliedAt?: string;
   pointName?: string;
   cansDelivered?: number;
   cansTakenBack?: number;
@@ -69,56 +71,17 @@ interface DeliveryLog {
   vehicle?: Vehicle;
 }
 
+type NumberedLog = DeliveryLog & { serialNo: number };
+
 interface GroupedLogs {
   key: string;
   label: string;
-  dateInputValue: string;
-  dateSortValue: number;
-  entries: Array<DeliveryLog & { serialNo: number }>;
+  entries: NumberedLog[];
 }
 
 interface DriverVehiclesResponse {
   vehicles: Vehicle[];
   assignedVehicleId: string | null;
-}
-
-function formatDateHeading(value: string | Date) {
-  return new Date(value).toLocaleDateString("en-IN", {
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-  });
-}
-
-function formatDateTime(value: string | Date) {
-  return new Date(value).toLocaleString("en-IN", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: true,
-  });
-}
-
-function toDateInputValue(value: string | Date) {
-  const date = new Date(value);
-  const year = date.getFullYear();
-  const month = `${date.getMonth() + 1}`.padStart(2, "0");
-  const day = `${date.getDate()}`.padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
-function getRelativeDayLabel(value: string | Date) {
-  const target = new Date(value);
-  target.setHours(0, 0, 0, 0);
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const diffDays = Math.round((today.getTime() - target.getTime()) / (1000 * 60 * 60 * 24));
-
-  if (diffDays === 0) return "Today";
-  if (diffDays === 1) return "Yesterday";
-  return formatDateHeading(target);
 }
 
 function isSupportedImageFile(file: File) {
@@ -203,8 +166,20 @@ async function compressImageFile(file: File) {
   }
 }
 
-const DAY_GROUPS_PER_PAGE = 3;
 const RECENT_DAYS = 5;
+
+// Every driver request goes through here: a 401 means the session ended (or
+// the driver was deactivated), so the app returns to the login page instead
+// of showing an empty ledger.
+async function driverGet<T>(url: string): Promise<T> {
+  const res = await fetch(url, { cache: "no-store" });
+  if (res.status === 401) {
+    void signOut({ callbackUrl: "/login" });
+    throw new Error("Signed out");
+  }
+  if (!res.ok) throw new Error("Request failed");
+  return (await res.json()) as T;
+}
 
 function normalizeLogs(data: DeliveryLog[] | undefined): DeliveryLog[] {
   return (data ?? []).map((log) => ({
@@ -212,11 +187,9 @@ function normalizeLogs(data: DeliveryLog[] | undefined): DeliveryLog[] {
     logType: log.logType === "cash" ? "cash" : "water",
     // Deliveries saved before the can/case choice existed are cans.
     productType: toProductType(log.productType),
-    formattedSuppliedAt: log.formattedSuppliedAt ?? formatDateTime(log.suppliedAt),
   }));
 }
 
-// "2 cans" / "1 case", or null when the row has no delivered quantity.
 // "2 cans", "3 cases · 500ml", or null when the row has no delivered quantity.
 function deliveredText(log: DeliveryLog): string | null {
   const quantity = deliveredQuantity(log);
@@ -229,7 +202,8 @@ function deliveredText(log: DeliveryLog): string | null {
 function buildGroupedLogs(source: DeliveryLog[]): GroupedLogs[] {
   const map = new Map<string, DeliveryLog[]>();
   for (const log of source) {
-    const key = new Date(log.suppliedAt).toDateString();
+    // Grouped by IST business day, the same day the server uses.
+    const key = istDayKey(log.suppliedAt);
     const existing = map.get(key) ?? [];
     existing.push(log);
     map.set(key, existing);
@@ -240,24 +214,185 @@ function buildGroupedLogs(source: DeliveryLog[]): GroupedLogs[] {
   return Array.from(map.entries())
     .map(([key, entries]) => ({
       key,
-      label: getRelativeDayLabel(entries[0]?.suppliedAt ?? new Date().toISOString()),
-      dateInputValue: toDateInputValue(entries[0]?.suppliedAt ?? new Date()),
-      dateSortValue: new Date(entries[0]?.suppliedAt ?? 0).getTime(),
+      label: relativeDayLabel(entries[0]?.suppliedAt ?? Date.now()),
       entries: entries
         .sort((a, b) => new Date(b.suppliedAt).getTime() - new Date(a.suppliedAt).getTime())
         .map((entry, index) => ({ ...entry, serialNo: index + 1 })),
     }))
-    .sort((a, b) => b.dateSortValue - a.dateSortValue);
+    .sort((a, b) => (a.key < b.key ? 1 : a.key > b.key ? -1 : 0));
 }
+
+const tabButtonStyle = (active: boolean): React.CSSProperties => ({
+  border: 0,
+  borderRadius: "12px",
+  background: active ? "var(--accent-primary)" : "#f3f4f6",
+  padding: "0.65rem 0.9rem",
+  fontWeight: 700,
+  fontSize: "1rem",
+  cursor: "pointer",
+  color: active ? "#ffffff" : "#111827",
+  flex: 1,
+});
+
+const calendarButtonStyle: React.CSSProperties = {
+  width: "36px", height: "36px", borderRadius: "8px",
+  border: "1px solid #ffffff",
+  background: "var(--accent-primary)", color: "#ffffff",
+  display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
+};
+
+function CalendarIcon({ clear }: { clear: boolean }) {
+  return clear ? (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" aria-hidden="true">
+      <path d="M18 6L6 18" /><path d="M6 6l12 12" />
+    </svg>
+  ) : (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <path d="M8 2v4" /><path d="M16 2v4" />
+      <rect x="3" y="4" width="18" height="18" rx="2" /><path d="M3 10h18" />
+    </svg>
+  );
+}
+
+function ErrorWithRetry({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div className="alert alert-error" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.75rem", flexWrap: "wrap" }}>
+      <span>{message}</span>
+      <button type="button" className="btn btn-secondary btn-sm" onClick={onRetry}>Retry</button>
+    </div>
+  );
+}
+
+// ── Log cards ──
+// Memoised so typing in a form (page state) doesn't re-render every card.
+// Their props are memoised groups and a state setter, which React keeps stable.
+
+const DeliveryCards = memo(function DeliveryCards({ groups, onSelect }: { groups: GroupedLogs[]; onSelect: (log: DeliveryLog) => void }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+      {groups.map((group) => (
+        <div key={group.key} className="log-group">
+          <h3 style={{ marginBottom: "0.6rem", fontSize: "0.95rem", color: "var(--text-secondary)" }}>
+            {group.label}
+          </h3>
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
+            {group.entries.map((log) => (
+              <button
+                key={log._id}
+                type="button"
+                className="card"
+                onClick={() => onSelect(log)}
+                style={{
+                  textAlign: "left", cursor: "pointer",
+                  border: "1px solid var(--border)",
+                  display: "flex", flexDirection: "column", gap: "0.35rem",
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                  <div style={{ fontWeight: 700, color: "var(--text-primary)" }}>
+                    {log.serialNo}. {log.customer?.name ?? log.pointName ?? "Delivery"}
+                  </div>
+                  {deliveredText(log) && (
+                    <div style={{
+                      background: log.productType === "case" ? "var(--warning)" : "var(--accent-primary)", color: "#fff",
+                      borderRadius: "20px", padding: "0.15rem 0.65rem",
+                      fontSize: "0.8rem", fontWeight: 700, whiteSpace: "nowrap",
+                    }}>
+                      {deliveredText(log)}
+                    </div>
+                  )}
+                </div>
+                {log.customer?.area && (
+                  <div style={{ fontSize: "0.82rem", color: "var(--text-secondary)" }}>{log.customer.area}</div>
+                )}
+                {log.cansTakenBack !== undefined && (
+                  <div style={{ fontSize: "0.82rem", color: "var(--text-secondary)" }}>
+                    Taken back: <strong>{log.cansTakenBack} can{log.cansTakenBack !== 1 ? "s" : ""}</strong>
+                  </div>
+                )}
+                {log.amount !== undefined && (
+                  <div style={{ fontSize: "0.85rem", color: "var(--text-secondary)" }}>
+                    Amount: <strong>{formatMoney(log.amount)}</strong>
+                  </div>
+                )}
+                <div style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>
+                  {formatDateTime(log.suppliedAt)}
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+});
+
+const CashCards = memo(function CashCards({ groups, onSelect }: { groups: GroupedLogs[]; onSelect: (log: DeliveryLog) => void }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+      {groups.map((group) => (
+        <div key={group.key} className="log-group">
+          <h3 style={{ marginBottom: "0.6rem", fontSize: "0.95rem", color: "var(--text-secondary)" }}>
+            {group.label}
+          </h3>
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
+            {group.entries.map((log) => (
+              <button
+                key={log._id}
+                type="button"
+                className="card"
+                onClick={() => onSelect(log)}
+                style={{
+                  textAlign: "left", cursor: "pointer",
+                  border: "1px solid var(--border)",
+                  display: "flex", flexDirection: "column", gap: "0.35rem",
+                }}
+              >
+                <div style={{ fontWeight: 700, color: "var(--text-primary)" }}>
+                  {log.serialNo}. Amount: {log.amount !== undefined ? formatMoney(log.amount) : "-"}
+                </div>
+                <div style={{ fontSize: "0.85rem", color: "var(--text-secondary)", textTransform: "capitalize" }}>
+                  {log.cashType ?? "-"}
+                </div>
+                {log.billImageUrl && (
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", marginTop: "0.25rem" }}>
+                    <img
+                      src={cloudinaryThumb(log.billImageUrl, 120)}
+                      alt="Fuel bill preview"
+                      loading="lazy"
+                      decoding="async"
+                      width={52}
+                      height={52}
+                      style={{
+                        width: "52px", height: "52px", objectFit: "cover",
+                        borderRadius: "8px", border: "1px solid var(--border)",
+                      }}
+                    />
+                  </div>
+                )}
+                <div style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>
+                  {formatDateTime(log.suppliedAt)}
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+});
 
 export default function DriverDashboard() {
   const [activeTab, setActiveTab] = useState<"delivery" | "cash" | "register">("delivery");
 
-  // Logs and UI state
+  // Each form keeps its own messages so they never leak across tabs.
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
+  const [deliveryError, setDeliveryError] = useState("");
+  const [deliverySuccess, setDeliverySuccess] = useState("");
+  const [cashError, setCashError] = useState("");
+  const [cashSuccess, setCashSuccess] = useState("");
   const [selectedLog, setSelectedLog] = useState<DeliveryLog | null>(null);
+  const [detailError, setDetailError] = useState("");
   const [expandedImageUrl, setExpandedImageUrl] = useState<string | null>(null);
   const [deliveryDateFilter, setDeliveryDateFilter] = useState("");
   const [cashDateFilter, setCashDateFilter] = useState("");
@@ -309,65 +444,60 @@ export default function DriverDashboard() {
 
   const queryClient = useQueryClient();
 
-  const { data: vehiclesData, isLoading: vehiclesLoading } = useQuery<DriverVehiclesResponse>({
+  const vehiclesQuery = useQuery<DriverVehiclesResponse>({
     queryKey: ["driver", "vehicles"],
     staleTime: 1000 * 60 * 10,
     queryFn: async () => {
-      const res = await fetch("/api/driver/vehicles", { cache: "no-store" });
-      if (!res.ok) throw new Error("Failed to load vehicles");
-      const data = (await res.json()) as DriverVehiclesResponse;
+      const data = await driverGet<DriverVehiclesResponse>("/api/driver/vehicles");
       return {
         vehicles: Array.isArray(data.vehicles) ? data.vehicles : [],
         assignedVehicleId: data.assignedVehicleId ?? null,
       };
     },
   });
+  const { data: vehiclesData } = vehiclesQuery;
 
-  const { data: customersData, isLoading: customersLoading } = useQuery<Customer[]>({
+  const customersQuery = useQuery<Customer[]>({
     queryKey: ["driver", "customers"],
     staleTime: 1000 * 60 * 5,
     queryFn: async () => {
-      const res = await fetch("/api/driver/customers", { cache: "no-store" });
-      if (!res.ok) throw new Error("Failed to load customers");
-      const data = (await res.json()) as unknown;
+      const data = await driverGet<unknown>("/api/driver/customers");
       return Array.isArray(data) ? (data as Customer[]) : [];
     },
   });
+  const { data: customersData, isLoading: customersLoading } = customersQuery;
 
-  const { data: logsData, isLoading: logsLoading } = useQuery<DeliveryLog[]>({
+  const logsQuery = useQuery<DeliveryLog[]>({
     queryKey: ["driver", "supplies"],
     queryFn: async () => {
-      const res = await fetch("/api/driver/supplies", { cache: "no-store" });
-      if (!res.ok) throw new Error("Failed to load logs");
-      const data = (await res.json()) as unknown;
+      const data = await driverGet<unknown>("/api/driver/supplies");
       return Array.isArray(data) ? (data as DeliveryLog[]) : [];
     },
   });
+  const { data: logsData, isLoading: logsLoading } = logsQuery;
 
   // Older days are fetched on demand when a date filter is picked
-  const { data: deliveryDateData, isLoading: deliveryDateLoading } = useQuery<DeliveryLog[]>({
+  const deliveryDateQuery = useQuery<DeliveryLog[]>({
     queryKey: ["driver", "supplies", "byDate", deliveryDateFilter],
     enabled: Boolean(deliveryDateFilter),
     staleTime: 1000 * 60 * 5,
     queryFn: async () => {
-      const res = await fetch(`/api/driver/supplies?date=${encodeURIComponent(deliveryDateFilter)}`, { cache: "no-store" });
-      if (!res.ok) throw new Error("Failed to load logs");
-      const data = (await res.json()) as unknown;
+      const data = await driverGet<unknown>(`/api/driver/supplies?date=${encodeURIComponent(deliveryDateFilter)}`);
       return Array.isArray(data) ? (data as DeliveryLog[]) : [];
     },
   });
+  const { data: deliveryDateData, isLoading: deliveryDateLoading } = deliveryDateQuery;
 
-  const { data: cashDateData, isLoading: cashDateLoading } = useQuery<DeliveryLog[]>({
+  const cashDateQuery = useQuery<DeliveryLog[]>({
     queryKey: ["driver", "supplies", "byDate", cashDateFilter],
     enabled: Boolean(cashDateFilter),
     staleTime: 1000 * 60 * 5,
     queryFn: async () => {
-      const res = await fetch(`/api/driver/supplies?date=${encodeURIComponent(cashDateFilter)}`, { cache: "no-store" });
-      if (!res.ok) throw new Error("Failed to load logs");
-      const data = (await res.json()) as unknown;
+      const data = await driverGet<unknown>(`/api/driver/supplies?date=${encodeURIComponent(cashDateFilter)}`);
       return Array.isArray(data) ? (data as DeliveryLog[]) : [];
     },
   });
+  const { data: cashDateData, isLoading: cashDateLoading } = cashDateQuery;
 
   const vehicles = vehiclesData?.vehicles ?? [];
   const assignedVehicleId =
@@ -382,9 +512,9 @@ export default function DriverDashboard() {
     setDeliveryForm((f) => (f.vehicleId ? f : { ...f, vehicleId: assignedVehicleId }));
   }, [assignedVehicleId]);
 
-
   // Close customer dropdown on outside click
   useEffect(() => {
+    if (!showCustomerList) return;
     function handler(e: MouseEvent) {
       if (customerListRef.current && !customerListRef.current.contains(e.target as Node)) {
         setShowCustomerList(false);
@@ -392,7 +522,14 @@ export default function DriverDashboard() {
     }
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
-  }, []);
+  }, [showCustomerList]);
+
+  // Escape closes the top-most dialog.
+  const closeTopDialog = useCallback(() => {
+    if (expandedImageUrl) setExpandedImageUrl(null);
+    else if (selectedLog) { setSelectedLog(null); setDetailError(""); }
+  }, [expandedImageUrl, selectedLog]);
+  useEscapeKey(closeTopDialog, Boolean(expandedImageUrl || selectedLog));
 
   const logs = useMemo<DeliveryLog[]>(() => normalizeLogs(logsData), [logsData]);
 
@@ -413,13 +550,14 @@ export default function DriverDashboard() {
     for (const c of customersData ?? []) {
       const lt = c.locationType;
       const displayLabel = `${c.name}${c.phone ? ` (${c.phone})` : ""}`;
+      const base = { customerId: c._id, label: displayLabel, subscriptionCans: c.subscriptionCans, cashPerCan: c.cashPerCan };
       if (!lt || lt === "home") {
-        opts.push({ key: `${c._id}-home`, customerId: c._id, label: displayLabel, locationType: "home", subscriptionCans: c.subscriptionCans, cashPerCan: c.cashPerCan });
+        opts.push({ key: `${c._id}-home`, ...base, locationType: "home" });
       } else if (lt === "office") {
-        opts.push({ key: `${c._id}-office`, customerId: c._id, label: displayLabel, locationType: "office", subscriptionCans: c.subscriptionCans, cashPerCan: c.cashPerCan });
+        opts.push({ key: `${c._id}-office`, ...base, locationType: "office" });
       } else if (lt === "both") {
-        opts.push({ key: `${c._id}-home`, customerId: c._id, label: displayLabel, locationType: "home", subscriptionCans: c.subscriptionCans, cashPerCan: c.cashPerCan });
-        opts.push({ key: `${c._id}-office`, customerId: c._id, label: displayLabel, locationType: "office", subscriptionCans: c.subscriptionCans, cashPerCan: c.cashPerCan });
+        opts.push({ key: `${c._id}-home`, ...base, locationType: "home" });
+        opts.push({ key: `${c._id}-office`, ...base, locationType: "office" });
       }
     }
     return opts.sort((a, b) => a.label.localeCompare(b.label));
@@ -440,14 +578,16 @@ export default function DriverDashboard() {
     ? casePricePreview(parseOptionalNumber(deliveryForm.cansDelivered), parseOptionalNumber(deliveryForm.casePrice))
     : null;
 
-  const maxSelectableDateValue = toDateInputValue(new Date(Date.now() - 3 * 24 * 60 * 60 * 1000));
+  const maxSelectableDateValue = istToday();
 
+  // With no date filter, every day the server sent (the last RECENT_DAYS
+  // days) is shown.
   const visibleDeliveryGroups = useMemo(() => {
     if (deliveryDateFilter) {
       const dayLogs = normalizeLogs(deliveryDateData).filter((log) => (log.logType ?? "water") === "water");
       return buildGroupedLogs(dayLogs).slice(0, 1);
     }
-    return groupedDeliveryLogs.slice(0, DAY_GROUPS_PER_PAGE);
+    return groupedDeliveryLogs;
   }, [groupedDeliveryLogs, deliveryDateFilter, deliveryDateData]);
 
   const visibleCashGroups = useMemo(() => {
@@ -455,7 +595,7 @@ export default function DriverDashboard() {
       const dayLogs = normalizeLogs(cashDateData).filter((log) => log.logType === "cash");
       return buildGroupedLogs(dayLogs).slice(0, 1);
     }
-    return groupedCashLogs.slice(0, DAY_GROUPS_PER_PAGE);
+    return groupedCashLogs;
   }, [cashDateFilter, groupedCashLogs, cashDateData]);
 
   const prefersCameraCapture = useMemo(() => {
@@ -474,6 +614,16 @@ export default function DriverDashboard() {
     };
   }, [cashBillPreview]);
 
+  function switchTab(tab: "delivery" | "cash" | "register") {
+    setActiveTab(tab);
+    setDeliveryError("");
+    setDeliverySuccess("");
+    setCashError("");
+    setCashSuccess("");
+    setRegisterError("");
+    setRegisterSuccess("");
+  }
+
   function clearCashBillSelection() {
     if (cashBillPreview.startsWith("blob:")) URL.revokeObjectURL(cashBillPreview);
     if (cashBillInputRef.current) cashBillInputRef.current.value = "";
@@ -485,16 +635,24 @@ export default function DriverDashboard() {
   async function handleCashBillChange(e: ChangeEvent<HTMLInputElement>) {
     const selectedFile = e.target.files?.[0];
     if (!selectedFile) { clearCashBillSelection(); return; }
-    setError("");
+    setCashError("");
     setCashBillProcessing(true);
     try {
       const compressedFile = await compressImageFile(selectedFile);
+      // The server (and Vercel) accept at most 4 MB. HEIC photos can't be
+      // compressed in the browser, so catch oversized ones before uploading.
+      if (compressedFile.size > 4 * 1024 * 1024) {
+        clearCashBillSelection();
+        setCashError("Photo is too large (over 4 MB). Please retake it or take a screenshot of the bill.");
+        e.target.value = "";
+        return;
+      }
       if (cashBillPreview.startsWith("blob:")) URL.revokeObjectURL(cashBillPreview);
       setCashBillFile(compressedFile);
       setCashBillPreview(URL.createObjectURL(compressedFile));
     } catch (err) {
       clearCashBillSelection();
-      setError(err instanceof Error ? err.message : "Failed to process the image.");
+      setCashError(err instanceof Error ? err.message : "Failed to process the image.");
       e.target.value = "";
     } finally {
       setCashBillProcessing(false);
@@ -510,6 +668,7 @@ export default function DriverDashboard() {
 
   async function downloadImageToDevice(imageUrl?: string | null) {
     if (!imageUrl) return;
+    setDetailError("");
     try {
       const response = await fetch(imageUrl);
       if (!response.ok) throw new Error("Failed to download image.");
@@ -525,20 +684,18 @@ export default function DriverDashboard() {
       window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
     } catch {
       window.open(imageUrl, "_blank", "noopener,noreferrer");
-      setError("Couldn't start the download automatically. The image was opened in a new tab.");
+      setDetailError("Couldn't start the download automatically. The image was opened in a new tab.");
     }
   }
 
   async function submitDelivery(e: FormEvent) {
     e.preventDefault();
-    setError("");
-    setSuccess("");
-    setSubmitting(true);
+    setDeliveryError("");
+    setDeliverySuccess("");
 
     const selectedOpt = deliveryOptions.find((o) => o.key === deliveryForm.deliveryKey);
     if (!selectedOpt) {
-      setError("Please select a customer.");
-      setSubmitting(false);
+      setDeliveryError("Please select a customer.");
       return;
     }
 
@@ -553,14 +710,13 @@ export default function DriverDashboard() {
       : { productType: "can", cansDelivered: quantity, cansTakenBack: parseOptionalNumber(deliveryForm.cansTakenBack) };
     const quantityError = validateDeliveryQuantities(quantities);
     if (quantityError) {
-      setError(quantityError);
-      setSubmitting(false);
+      setDeliveryError(quantityError);
       return;
     }
 
-    let res: Response;
+    setSubmitting(true);
     try {
-      res = await fetch("/api/driver/supplies", {
+      const res = await fetch("/api/driver/supplies", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -572,26 +728,23 @@ export default function DriverDashboard() {
           paymentStatus: deliveryForm.paymentStatus,
         }),
       });
+      if (res.status === 401) { void signOut({ callbackUrl: "/login" }); return; }
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        setDeliveryError(data.error ?? "Failed to save delivery log.");
+        return;
+      }
+
+      setDeliverySuccess("Delivery logged successfully.");
+      setDeliveryForm({ deliveryKey: "", productType: "can", cansDelivered: "", cansTakenBack: "", caseSize: "", casePrice: "", vehicleId: assignedVehicleId, notes: "", paymentStatus: "cash" });
+      setCustomerSearch("");
+      // Fire-and-forget so the form frees up immediately; the list refreshes in the background.
+      void queryClient.invalidateQueries({ queryKey: ["driver", "supplies"], exact: true });
     } catch {
+      setDeliveryError("Network error. Please check your connection and try again.");
+    } finally {
       setSubmitting(false);
-      setError("Network error. Please check your connection and try again.");
-      return;
     }
-
-    let data: { error?: string } = {};
-    try { data = (await res.json()) as { error?: string }; } catch { /* ignore */ }
-    setSubmitting(false);
-
-    if (!res.ok) {
-      setError(data.error ?? "Failed to save delivery log.");
-      return;
-    }
-
-    setSuccess("Delivery logged successfully.");
-    setDeliveryForm({ deliveryKey: "", productType: "can", cansDelivered: "", cansTakenBack: "", caseSize: "", casePrice: "", vehicleId: assignedVehicleId, notes: "", paymentStatus: "cash" });
-    setCustomerSearch("");
-    // Fire-and-forget so the form frees up immediately; the list refreshes in the background.
-    void queryClient.invalidateQueries({ queryKey: ["driver", "supplies"] });
   }
 
   async function submitRegister(e: FormEvent) {
@@ -600,9 +753,8 @@ export default function DriverDashboard() {
     setRegisterSuccess("");
     setRegistering(true);
 
-    let res: Response;
     try {
-      res = await fetch("/api/driver/customers", {
+      const res = await fetch("/api/driver/customers", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -614,37 +766,34 @@ export default function DriverDashboard() {
           cashPerCan: registerForm.cashPerCan !== "" ? Number(registerForm.cashPerCan) : undefined,
         }),
       });
+      if (res.status === 401) { void signOut({ callbackUrl: "/login" }); return; }
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        setRegisterError(data.error ?? "Failed to register customer.");
+        return;
+      }
+
+      setRegisterSuccess("Customer registered successfully.");
+      setRegisterForm({ name: "", phone: "", email: "", location: "", locationType: "home", cashPerCan: "" });
+      void queryClient.invalidateQueries({ queryKey: ["driver", "customers"], exact: true });
     } catch {
-      setRegistering(false);
       setRegisterError("Network error. Please check your connection and try again.");
-      return;
+    } finally {
+      setRegistering(false);
     }
-
-    let data: { error?: string } = {};
-    try { data = (await res.json()) as { error?: string }; } catch { /* ignore */ }
-    setRegistering(false);
-
-    if (!res.ok) {
-      setRegisterError(data.error ?? "Failed to register customer.");
-      return;
-    }
-
-    setRegisterSuccess("Customer registered successfully.");
-    setRegisterForm({ name: "", phone: "", email: "", location: "", locationType: "home" as "home" | "office" | "both", cashPerCan: "" });
-    void queryClient.invalidateQueries({ queryKey: ["driver", "customers"] });
   }
 
   async function submitCash(e: FormEvent) {
     e.preventDefault();
-    setError("");
-    setSuccess("");
+    setCashError("");
+    setCashSuccess("");
 
     if (cashForm.cashType === "fuel" && !cashBillFile) {
-      setError("Please attach the fuel bill image.");
+      setCashError("Please attach the fuel bill image.");
       return;
     }
     if (cashBillProcessing) {
-      setError("Please wait for the image to finish processing.");
+      setCashError("Please wait for the image to finish processing.");
       return;
     }
 
@@ -657,87 +806,41 @@ export default function DriverDashboard() {
     formData.set("notes", cashForm.notes);
     if (cashBillFile) formData.set("billImage", cashBillFile);
 
-    let res: Response;
     try {
-      res = await fetch("/api/driver/supplies", { method: "POST", body: formData });
+      const res = await fetch("/api/driver/supplies", { method: "POST", body: formData });
+      if (res.status === 401) { void signOut({ callbackUrl: "/login" }); return; }
+      if (res.status === 413) {
+        setCashError("Photo is too large. Please retake it or take a screenshot of the bill.");
+        return;
+      }
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        setCashError(data.error ?? "Failed to save cash log.");
+        return;
+      }
+
+      setCashSuccess("Cash credit logged successfully.");
+      setCashForm({ amount: "", cashType: "fuel", notes: "" });
+      clearCashBillSelection();
+      void queryClient.invalidateQueries({ queryKey: ["driver", "supplies"], exact: true });
     } catch {
+      setCashError("Network error. Please check your connection and try again.");
+    } finally {
       setSubmitting(false);
-      setError("Network error. Please check your connection and try again.");
-      return;
     }
-
-    let data: { error?: string } = {};
-    try { data = (await res.json()) as { error?: string }; } catch { /* ignore */ }
-    setSubmitting(false);
-
-    if (!res.ok) {
-      setError(data.error ?? "Failed to save cash log.");
-      return;
-    }
-
-    setSuccess("Cash credit logged successfully.");
-    setCashForm({ amount: "", cashType: "fuel", notes: "" });
-    clearCashBillSelection();
-    void queryClient.invalidateQueries({ queryKey: ["driver", "supplies"] });
   }
 
-  const isLoading = vehiclesLoading || customersLoading || logsLoading;
+  const listError = logsQuery.isError;
 
   return (
     <div>
       <div className="driver-tab-bar">
         <div style={{ display: "flex", minWidth: 0, width: "100%", gap: "0.35rem" }}>
-          <button
-            type="button"
-            onClick={() => setActiveTab("delivery")}
-            style={{
-              borderTop: 0, borderRight: 0, borderBottom: 0, borderLeft: 0,
-              borderRadius: "12px",
-              background: activeTab === "delivery" ? "var(--accent-primary)" : "#f3f4f6",
-              padding: "0.65rem 0.9rem",
-              fontWeight: 700,
-              fontSize: "1rem",
-              cursor: "pointer",
-              color: activeTab === "delivery" ? "#ffffff" : "#111827",
-              flex: 1,
-            }}
-          >
-            Supply
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab("cash")}
-            style={{
-              borderTop: 0, borderRight: 0, borderBottom: 0, borderLeft: 0,
-              borderRadius: "12px",
-              background: activeTab === "cash" ? "var(--accent-primary)" : "#f3f4f6",
-              padding: "0.65rem 0.9rem",
-              fontWeight: 700,
-              fontSize: "1rem",
-              cursor: "pointer",
-              color: activeTab === "cash" ? "#ffffff" : "#111827",
-              flex: 1,
-            }}
-          >
-            Cash
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab("register")}
-            style={{
-              borderTop: 0, borderRight: 0, borderBottom: 0, borderLeft: 0,
-              borderRadius: "12px",
-              background: activeTab === "register" ? "var(--accent-primary)" : "#f3f4f6",
-              padding: "0.65rem 0.9rem",
-              fontWeight: 700,
-              fontSize: "1rem",
-              cursor: "pointer",
-              color: activeTab === "register" ? "#ffffff" : "#111827",
-              flex: 1,
-            }}
-          >
-            User
-          </button>
+          {([["delivery", "Supply"], ["cash", "Cash"], ["register", "User"]] as const).map(([tab, label]) => (
+            <button key={tab} type="button" onClick={() => switchTab(tab)} aria-pressed={activeTab === tab} style={tabButtonStyle(activeTab === tab)}>
+              {label}
+            </button>
+          ))}
         </div>
       </div>
 
@@ -746,13 +849,20 @@ export default function DriverDashboard() {
         <>
           <div className="card" style={{ marginBottom: "1.5rem" }}>
             <h3 style={{ marginBottom: "1rem" }}>Delivery Log</h3>
+            {customersQuery.isError && (
+              <ErrorWithRetry message="Couldn't load the customer list." onRetry={() => void customersQuery.refetch()} />
+            )}
+            {vehiclesQuery.isError && (
+              <ErrorWithRetry message="Couldn't load the vehicle list." onRetry={() => void vehiclesQuery.refetch()} />
+            )}
             <form onSubmit={(e) => void submitDelivery(e)}>
               <div className="grid-2" style={{ marginBottom: "1rem" }}>
                 <div className="form-group" style={{ gridColumn: "1 / -1" }}>
-                  <label className="form-label">Customer *</label>
+                  <label className="form-label" htmlFor="customerSearch">Customer *</label>
                   <div ref={customerListRef} style={{ position: "relative" }}>
                     <div style={{ position: "relative" }}>
                       <input
+                        id="customerSearch"
                         className="form-input"
                         style={{ paddingRight: deliveryForm.deliveryKey ? "2.5rem" : undefined }}
                         value={deliveryForm.deliveryKey ? (selectedDeliveryOption?.label ?? "") : customerSearch}
@@ -786,11 +896,13 @@ export default function DriverDashboard() {
                       )}
                     </div>
                     {showCustomerList && !deliveryForm.deliveryKey && (
-                      <div style={{ position: "absolute", top: "calc(100% + 2px)", left: 0, right: 0, background: "#fff", border: "1px solid var(--border-active)", borderRadius: "var(--radius-sm)", zIndex: 50, maxHeight: "220px", overflowY: "auto", boxShadow: "var(--shadow-md)" }}>
+                      <div role="listbox" style={{ position: "absolute", top: "calc(100% + 2px)", left: 0, right: 0, background: "#fff", border: "1px solid var(--border-active)", borderRadius: "var(--radius-sm)", zIndex: 50, maxHeight: "220px", overflowY: "auto", boxShadow: "var(--shadow-md)" }}>
                         {filteredDeliveryOptions.length > 0 ? filteredDeliveryOptions.map((opt, i) => (
                           <button
                             key={opt.key}
                             type="button"
+                            role="option"
+                            aria-selected={false}
                             onMouseDown={(e) => {
                               e.preventDefault();
                               setDeliveryForm((f) => ({ ...f, deliveryKey: opt.key }));
@@ -823,13 +935,13 @@ export default function DriverDashboard() {
                     <div style={{ fontSize: "0.8rem", color: "var(--text-secondary)", marginTop: "0.3rem", display: "flex", gap: "1rem", flexWrap: "wrap" }}>
                       <span>Subscription: {selectedDeliveryOption.subscriptionCans} can{selectedDeliveryOption.subscriptionCans !== 1 ? "s" : ""}/day</span>
                       {!isCaseDelivery && selectedDeliveryOption.cashPerCan !== undefined && (
-                        <span>Rate: ₹{selectedDeliveryOption.cashPerCan}/can</span>
+                        <span>Rate: {formatMoney(selectedDeliveryOption.cashPerCan)}/can</span>
                       )}
                     </div>
                   )}
                 </div>
-                <div className="form-group" style={{ gridColumn: "1 / -1" }}>
-                  <label className="form-label">Product *</label>
+                <fieldset className="form-group" style={{ gridColumn: "1 / -1", border: 0, padding: 0, margin: 0 }}>
+                  <legend className="form-label">Product *</legend>
                   <div style={{ display: "flex", gap: "1rem", marginTop: "0.4rem", flexWrap: "wrap" }}>
                     {(["can", "case"] as const).map((pt) => (
                       <label key={pt} style={{ display: "flex", alignItems: "center", gap: "0.4rem", cursor: "pointer", fontWeight: deliveryForm.productType === pt ? 700 : 500, padding: "0.35rem 0.5rem", minHeight: "44px" }}>
@@ -845,10 +957,10 @@ export default function DriverDashboard() {
                       </label>
                     ))}
                   </div>
-                </div>
+                </fieldset>
                 {isCaseDelivery && (
-                  <div className="form-group" style={{ gridColumn: "1 / -1" }}>
-                    <label className="form-label">Bottle Size *</label>
+                  <fieldset className="form-group" style={{ gridColumn: "1 / -1", border: 0, padding: 0, margin: 0 }}>
+                    <legend className="form-label">Bottle Size *</legend>
                     <div style={{ display: "flex", gap: "0.5rem 1rem", marginTop: "0.4rem", flexWrap: "wrap" }}>
                       {CASE_SIZES.map((size) => (
                         <label key={size} style={{ display: "flex", alignItems: "center", gap: "0.4rem", cursor: "pointer", fontWeight: deliveryForm.caseSize === size ? 700 : 500, padding: "0.35rem 0.5rem", minHeight: "44px" }}>
@@ -863,7 +975,7 @@ export default function DriverDashboard() {
                         </label>
                       ))}
                     </div>
-                  </div>
+                  </fieldset>
                 )}
                 <div className="form-group">
                   <label className="form-label" htmlFor="cansDelivered">{isCaseDelivery ? "Cases Delivered *" : "Cans Delivered *"}</label>
@@ -871,6 +983,7 @@ export default function DriverDashboard() {
                     id="cansDelivered"
                     className="form-input"
                     type="number"
+                    inputMode="numeric"
                     min={isCaseDelivery ? "1" : "0"}
                     step="1"
                     value={deliveryForm.cansDelivered}
@@ -900,6 +1013,7 @@ export default function DriverDashboard() {
                       id="cansTakenBack"
                       className="form-input"
                       type="number"
+                      inputMode="numeric"
                       min="0"
                       step="1"
                       value={deliveryForm.cansTakenBack}
@@ -934,17 +1048,18 @@ export default function DriverDashboard() {
                   <input
                     id="deliveryNotes"
                     className="form-input"
+                    maxLength={1000}
                     value={deliveryForm.notes}
                     onChange={(e) => setDeliveryForm((f) => ({ ...f, notes: e.target.value }))}
                     placeholder="e.g. Customer was away, left at gate"
                   />
                 </div>
 
-                <div className="form-group" style={{ gridColumn: "1 / -1" }}>
-                  <label className="form-label">Payment Status</label>
+                <fieldset className="form-group" style={{ gridColumn: "1 / -1", border: 0, padding: 0, margin: 0 }}>
+                  <legend className="form-label">Payment Status</legend>
                   <div style={{ display: "flex", gap: "1rem", marginTop: "0.4rem", flexWrap: "wrap" }}>
                     {(["cash", "upi", "not_paid"] as const).map((ps) => (
-                      <label key={ps} style={{ display: "flex", alignItems: "center", gap: "0.4rem", cursor: "pointer", fontWeight: deliveryForm.paymentStatus === ps ? 700 : 500 }}>
+                      <label key={ps} style={{ display: "flex", alignItems: "center", gap: "0.4rem", cursor: "pointer", fontWeight: deliveryForm.paymentStatus === ps ? 700 : 500, padding: "0.35rem 0.5rem", minHeight: "44px" }}>
                         <input
                           type="radio"
                           name="paymentStatus"
@@ -956,11 +1071,11 @@ export default function DriverDashboard() {
                       </label>
                     ))}
                   </div>
-                </div>
+                </fieldset>
               </div>
 
-              {error && <div className="alert alert-error">{error}</div>}
-              {success && <div className="alert alert-success">{success}</div>}
+              {deliveryError && <div className="alert alert-error" role="alert">{deliveryError}</div>}
+              {deliverySuccess && <div className="alert alert-success" role="status">{deliverySuccess}</div>}
 
               <button type="submit" className="btn btn-primary mt-2" disabled={submitting}>
                 {submitting ? "Saving..." : "Log Delivery"}
@@ -973,28 +1088,14 @@ export default function DriverDashboard() {
               <h2>My Recent Deliveries</h2>
               <button
                 type="button"
-                aria-label="Open delivery date filter"
+                aria-label={deliveryDateFilter ? "Clear delivery date filter" : "Open delivery date filter"}
                 onClick={() => {
                   if (deliveryDateFilter) { setDeliveryDateFilter(""); return; }
                   openDatePicker(deliveryDateInputRef.current);
                 }}
-                style={{
-                  width: "36px", height: "36px", borderRadius: "8px",
-                  border: "1px solid #ffffff",
-                  background: "var(--accent-primary)", color: "#ffffff",
-                  display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
-                }}
+                style={calendarButtonStyle}
               >
-                {deliveryDateFilter ? (
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4">
-                    <path d="M18 6L6 18" /><path d="M6 6l12 12" />
-                  </svg>
-                ) : (
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M8 2v4" /><path d="M16 2v4" />
-                    <rect x="3" y="4" width="18" height="18" rx="2" /><path d="M3 10h18" />
-                  </svg>
-                )}
+                <CalendarIcon clear={Boolean(deliveryDateFilter)} />
               </button>
               <input
                 ref={deliveryDateInputRef}
@@ -1007,68 +1108,18 @@ export default function DriverDashboard() {
                 tabIndex={-1}
               />
             </div>
-            {(deliveryDateFilter ? deliveryDateLoading : isLoading) ? (
+            {deliveryDateFilter && deliveryDateQuery.isError ? (
+              <ErrorWithRetry message="Couldn't load that day's deliveries." onRetry={() => void deliveryDateQuery.refetch()} />
+            ) : !deliveryDateFilter && listError ? (
+              <ErrorWithRetry message="Couldn't load your recent deliveries." onRetry={() => void logsQuery.refetch()} />
+            ) : (deliveryDateFilter ? deliveryDateLoading : logsLoading) ? (
               <p style={{ color: "var(--text-muted)" }}>Loading...</p>
             ) : deliveryDateFilter && visibleDeliveryGroups.length === 0 ? (
               <div className="card empty-state">No deliveries found for selected date.</div>
             ) : !deliveryDateFilter && deliveryLogs.length === 0 ? (
               <div className="card empty-state">No deliveries in the last {RECENT_DAYS} days. Use the calendar to view older days.</div>
             ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
-                {visibleDeliveryGroups.map((group) => (
-                  <div key={group.key} className="log-group">
-                    <h3 style={{ marginBottom: "0.6rem", fontSize: "0.95rem", color: "var(--text-secondary)" }}>
-                      {group.label}
-                    </h3>
-                    <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
-                      {group.entries.map((log) => (
-                        <button
-                          key={log._id}
-                          type="button"
-                          className="card"
-                          onClick={() => setSelectedLog(log)}
-                          style={{
-                            textAlign: "left", cursor: "pointer",
-                            border: "1px solid var(--border)",
-                            display: "flex", flexDirection: "column", gap: "0.35rem",
-                          }}
-                        >
-                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                            <div style={{ fontWeight: 700, color: "var(--text-primary)" }}>
-                              {log.serialNo}. {log.customer?.name ?? log.pointName ?? "Delivery"}
-                            </div>
-                            {deliveredText(log) && (
-                              <div style={{
-                                background: log.productType === "case" ? "var(--warning)" : "var(--accent-primary)", color: "#fff",
-                                borderRadius: "20px", padding: "0.15rem 0.65rem",
-                                fontSize: "0.8rem", fontWeight: 700, whiteSpace: "nowrap",
-                              }}>
-                                {deliveredText(log)}
-                              </div>
-                            )}
-                          </div>
-                          {log.customer?.area && (
-                            <div style={{ fontSize: "0.82rem", color: "var(--text-secondary)" }}>{log.customer.area}</div>
-                          )}
-                          {log.cansTakenBack !== undefined && (
-                            <div style={{ fontSize: "0.82rem", color: "var(--text-secondary)" }}>
-                              Taken back: <strong>{log.cansTakenBack} can{log.cansTakenBack !== 1 ? "s" : ""}</strong>
-                            </div>
-                          )}
-                          {log.amount !== undefined && (
-                            <div style={{ fontSize: "0.85rem", color: "var(--text-secondary)" }}>
-                              Amount: <strong>₹{log.amount}</strong>
-                            </div>
-                          )}
-                          <div style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>
-                            {log.formattedSuppliedAt ?? formatDateTime(log.suppliedAt)}
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
+              <DeliveryCards groups={visibleDeliveryGroups} onSelect={setSelectedLog} />
             )}
           </div>
         </>
@@ -1079,13 +1130,14 @@ export default function DriverDashboard() {
             <form onSubmit={(e) => void submitCash(e)}>
               <div className="grid-2" style={{ marginBottom: "1rem" }}>
                 <div className="form-group">
-                  <label className="form-label" htmlFor="cashAmount">Amount</label>
+                  <label className="form-label" htmlFor="cashAmount">Amount (₹)</label>
                   <input
                     id="cashAmount"
                     className="form-input"
                     type="number"
                     min="0"
                     step="0.01"
+                    inputMode="decimal"
                     value={cashForm.amount}
                     onChange={(e) => setCashForm((f) => ({ ...f, amount: e.target.value }))}
                     placeholder="e.g. 500"
@@ -1114,6 +1166,7 @@ export default function DriverDashboard() {
                   <input
                     id="cashRemark"
                     className="form-input"
+                    maxLength={1000}
                     value={cashForm.notes}
                     onChange={(e) => setCashForm((f) => ({ ...f, notes: e.target.value }))}
                     placeholder="Optional remark"
@@ -1171,6 +1224,7 @@ export default function DriverDashboard() {
                         onChange={(e) => void handleCashBillChange(e)}
                         style={{ position: "absolute", opacity: 0, width: 1, height: 1, pointerEvents: "none" }}
                         tabIndex={-1}
+                        aria-hidden="true"
                       />
                     )}
                     <div style={{ fontSize: "0.8rem", color: "var(--text-secondary)", marginTop: "0.35rem" }}>
@@ -1196,8 +1250,8 @@ export default function DriverDashboard() {
                 )}
               </div>
 
-              {error && <div className="alert alert-error">{error}</div>}
-              {success && <div className="alert alert-success">{success}</div>}
+              {cashError && <div className="alert alert-error" role="alert">{cashError}</div>}
+              {cashSuccess && <div className="alert alert-success" role="status">{cashSuccess}</div>}
 
               <button type="submit" className="btn btn-primary mt-2" disabled={submitting}>
                 {submitting ? "Saving..." : "Submit"}
@@ -1210,28 +1264,14 @@ export default function DriverDashboard() {
               <h2>My Recent Cash Credits</h2>
               <button
                 type="button"
-                aria-label="Open cash date filter"
+                aria-label={cashDateFilter ? "Clear cash date filter" : "Open cash date filter"}
                 onClick={() => {
                   if (cashDateFilter) { setCashDateFilter(""); return; }
                   openDatePicker(cashDateInputRef.current);
                 }}
-                style={{
-                  width: "36px", height: "36px", borderRadius: "8px",
-                  border: "1px solid #ffffff",
-                  background: "var(--accent-primary)", color: "#ffffff",
-                  display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
-                }}
+                style={calendarButtonStyle}
               >
-                {cashDateFilter ? (
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4">
-                    <path d="M18 6L6 18" /><path d="M6 6l12 12" />
-                  </svg>
-                ) : (
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M8 2v4" /><path d="M16 2v4" />
-                    <rect x="3" y="4" width="18" height="18" rx="2" /><path d="M3 10h18" />
-                  </svg>
-                )}
+                <CalendarIcon clear={Boolean(cashDateFilter)} />
               </button>
               <input
                 ref={cashDateInputRef}
@@ -1244,58 +1284,18 @@ export default function DriverDashboard() {
                 tabIndex={-1}
               />
             </div>
-            {(cashDateFilter ? cashDateLoading : logsLoading) ? (
+            {cashDateFilter && cashDateQuery.isError ? (
+              <ErrorWithRetry message="Couldn't load that day's cash credits." onRetry={() => void cashDateQuery.refetch()} />
+            ) : !cashDateFilter && listError ? (
+              <ErrorWithRetry message="Couldn't load your recent cash credits." onRetry={() => void logsQuery.refetch()} />
+            ) : (cashDateFilter ? cashDateLoading : logsLoading) ? (
               <p style={{ color: "var(--text-muted)" }}>Loading...</p>
             ) : cashDateFilter && visibleCashGroups.length === 0 ? (
               <div className="card empty-state">No cash logs found for selected date.</div>
             ) : !cashDateFilter && cashLogs.length === 0 ? (
               <div className="card empty-state">No cash credits in the last {RECENT_DAYS} days. Use the calendar to view older days.</div>
             ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
-                {visibleCashGroups.map((group) => (
-                  <div key={group.key} className="log-group">
-                    <h3 style={{ marginBottom: "0.6rem", fontSize: "0.95rem", color: "var(--text-secondary)" }}>
-                      {group.label}
-                    </h3>
-                    <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
-                      {group.entries.map((log) => (
-                        <button
-                          key={log._id}
-                          type="button"
-                          className="card"
-                          onClick={() => setSelectedLog(log)}
-                          style={{
-                            textAlign: "left", cursor: "pointer",
-                            border: "1px solid var(--border)",
-                            display: "flex", flexDirection: "column", gap: "0.35rem",
-                          }}
-                        >
-                          <div style={{ fontWeight: 700, color: "var(--text-primary)" }}>
-                            {log.serialNo}. Amount: {log.amount ?? "-"}
-                          </div>
-                          <div style={{ fontSize: "0.85rem", color: "var(--text-secondary)", textTransform: "capitalize" }}>
-                            {log.cashType ?? "-"}
-                          </div>
-                          {log.billImageUrl && (
-                            <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", marginTop: "0.25rem" }}>
-                              <img
-                                src={cloudinaryThumb(log.billImageUrl, 120)}
-                                alt="Fuel bill preview"
-                                loading="lazy"
-                                decoding="async"
-                                style={{
-                                  width: "52px", height: "52px", objectFit: "cover",
-                                  borderRadius: "8px", border: "1px solid var(--border)",
-                                }}
-                              />
-                            </div>
-                          )}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
+              <CashCards groups={visibleCashGroups} onSelect={setSelectedLog} />
             )}
           </div>
         </>
@@ -1312,6 +1312,7 @@ export default function DriverDashboard() {
                 <input
                   id="regName"
                   className="form-input"
+                  maxLength={120}
                   value={registerForm.name}
                   onChange={(e) => setRegisterForm((f) => ({ ...f, name: e.target.value }))}
                   placeholder="Customer name"
@@ -1324,6 +1325,7 @@ export default function DriverDashboard() {
                   id="regPhone"
                   className="form-input"
                   type="tel"
+                  maxLength={30}
                   value={registerForm.phone}
                   onChange={(e) => setRegisterForm((f) => ({ ...f, phone: e.target.value }))}
                   placeholder="Mobile number"
@@ -1336,16 +1338,17 @@ export default function DriverDashboard() {
                   id="regEmail"
                   className="form-input"
                   type="email"
+                  maxLength={120}
                   value={registerForm.email}
                   onChange={(e) => setRegisterForm((f) => ({ ...f, email: e.target.value }))}
                   placeholder="customer@gmail.com"
                 />
               </div>
-              <div className="form-group" style={{ gridColumn: "1 / -1" }}>
-                <label className="form-label">Type *</label>
-                <div style={{ display: "flex", gap: "1.5rem", marginTop: "0.4rem" }}>
+              <fieldset className="form-group" style={{ gridColumn: "1 / -1", border: 0, padding: 0, margin: 0 }}>
+                <legend className="form-label">Type *</legend>
+                <div style={{ display: "flex", gap: "1.5rem", marginTop: "0.4rem", flexWrap: "wrap" }}>
                   {(["home", "office", "both"] as const).map((lt) => (
-                    <label key={lt} style={{ display: "flex", alignItems: "center", gap: "0.4rem", cursor: "pointer", fontWeight: registerForm.locationType === lt ? 700 : 500 }}>
+                    <label key={lt} style={{ display: "flex", alignItems: "center", gap: "0.4rem", cursor: "pointer", fontWeight: registerForm.locationType === lt ? 700 : 500, padding: "0.35rem 0", minHeight: "44px" }}>
                       <input
                         type="radio"
                         name="regLocationType"
@@ -1357,12 +1360,13 @@ export default function DriverDashboard() {
                     </label>
                   ))}
                 </div>
-              </div>
+              </fieldset>
               <div className="form-group" style={{ gridColumn: "1 / -1" }}>
                 <label className="form-label" htmlFor="regLocation">Location *</label>
                 <input
                   id="regLocation"
                   className="form-input"
+                  maxLength={500}
                   value={registerForm.location}
                   onChange={(e) => setRegisterForm((f) => ({ ...f, location: e.target.value }))}
                   placeholder="Address or landmark"
@@ -1377,6 +1381,7 @@ export default function DriverDashboard() {
                   type="number"
                   min="0"
                   step="0.01"
+                  inputMode="decimal"
                   value={registerForm.cashPerCan}
                   onChange={(e) => setRegisterForm((f) => ({ ...f, cashPerCan: e.target.value }))}
                   placeholder="e.g. 50"
@@ -1385,8 +1390,8 @@ export default function DriverDashboard() {
               </div>
             </div>
 
-            {registerError && <div className="alert alert-error">{registerError}</div>}
-            {registerSuccess && <div className="alert alert-success">{registerSuccess}</div>}
+            {registerError && <div className="alert alert-error" role="alert">{registerError}</div>}
+            {registerSuccess && <div className="alert alert-success" role="status">{registerSuccess}</div>}
 
             <button type="submit" className="btn btn-primary mt-2" disabled={registering}>
               {registering ? "Registering..." : "Register Customer"}
@@ -1403,16 +1408,19 @@ export default function DriverDashboard() {
             display: "flex", alignItems: "center", justifyContent: "center",
             padding: "1rem", zIndex: 200,
           }}
-          onClick={() => setSelectedLog(null)}
+          onClick={() => { setSelectedLog(null); setDetailError(""); }}
         >
           <div
             className="card"
-            style={{ width: "100%", maxWidth: "520px" }}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="logDetailsTitle"
+            style={{ width: "100%", maxWidth: "520px", maxHeight: "90vh", overflowY: "auto" }}
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between" style={{ marginBottom: "1rem" }}>
-              <h3>{selectedLog.logType === "cash" ? "Cash Credit Details" : "Delivery Details"}</h3>
-              <button type="button" className="btn btn-sm btn-secondary" onClick={() => setSelectedLog(null)}>
+              <h3 id="logDetailsTitle">{selectedLog.logType === "cash" ? "Cash Credit Details" : "Delivery Details"}</h3>
+              <button type="button" className="btn btn-sm btn-secondary" onClick={() => { setSelectedLog(null); setDetailError(""); }}>
                 Close
               </button>
             </div>
@@ -1426,7 +1434,7 @@ export default function DriverDashboard() {
                 {selectedLog.amount !== undefined && (
                   <div>
                     <div className="text-sm text-muted">Amount</div>
-                    <div style={{ fontWeight: 600 }}>₹{selectedLog.amount}</div>
+                    <div style={{ fontWeight: 600 }}>{formatMoney(selectedLog.amount)}</div>
                   </div>
                 )}
                 {selectedLog.cashType && (
@@ -1448,6 +1456,7 @@ export default function DriverDashboard() {
                       <button
                         type="button"
                         onClick={() => setExpandedImageUrl(selectedLog.billImageUrl ?? null)}
+                        aria-label="View the fuel bill at full size"
                         style={{ border: "0", background: "transparent", padding: 0, cursor: "zoom-in", width: "fit-content" }}
                       >
                         <img
@@ -1455,7 +1464,9 @@ export default function DriverDashboard() {
                           alt="Fuel bill"
                           loading="lazy"
                           decoding="async"
-                          style={{ width: "100%", maxWidth: "260px", borderRadius: "10px", border: "1px solid var(--border)" }}
+                          width={640}
+                          height={480}
+                          style={{ width: "100%", maxWidth: "260px", height: "auto", borderRadius: "10px", border: "1px solid var(--border)" }}
                         />
                       </button>
                       <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
@@ -1509,7 +1520,7 @@ export default function DriverDashboard() {
                 {selectedLog.productType === "case" && selectedLog.casePrice !== undefined && (
                   <div>
                     <div className="text-sm text-muted">Price per Case</div>
-                    <div style={{ fontWeight: 600 }}>₹{selectedLog.casePrice}</div>
+                    <div style={{ fontWeight: 600 }}>{formatMoney(selectedLog.casePrice)}</div>
                   </div>
                 )}
                 {selectedLog.cansTakenBack !== undefined && (
@@ -1523,7 +1534,7 @@ export default function DriverDashboard() {
                 {selectedLog.amount !== undefined && (
                   <div>
                     <div className="text-sm text-muted">Amount</div>
-                    <div style={{ fontWeight: 700, color: "var(--accent-primary)" }}>₹{selectedLog.amount}</div>
+                    <div style={{ fontWeight: 700, color: "var(--accent-primary)" }}>{formatMoney(selectedLog.amount)}</div>
                   </div>
                 )}
                 {selectedLog.vehicle && (
@@ -1550,6 +1561,7 @@ export default function DriverDashboard() {
                 )}
               </div>
             )}
+            {detailError && <div className="alert alert-error" style={{ marginTop: "1rem" }}>{detailError}</div>}
           </div>
         </div>
       )}
@@ -1565,11 +1577,14 @@ export default function DriverDashboard() {
         >
           <div
             className="card"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="fuelBillPreviewTitle"
             style={{ width: "100%", maxWidth: "900px", display: "flex", flexDirection: "column", gap: "0.75rem" }}
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between">
-              <h3>Fuel Bill Preview</h3>
+              <h3 id="fuelBillPreviewTitle">Fuel Bill Preview</h3>
               <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
                 <button
                   type="button"
@@ -1583,6 +1598,7 @@ export default function DriverDashboard() {
                 </button>
               </div>
             </div>
+            {detailError && <div className="alert alert-error">{detailError}</div>}
             <img
               src={cloudinaryAuto(expandedImageUrl)}
               alt="Fuel bill detailed preview"

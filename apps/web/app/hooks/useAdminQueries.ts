@@ -1,20 +1,9 @@
 "use client";
 
-import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import type { CaseSize, CasesBySize } from "../../lib/supplyProduct";
 
-function formatDateTime(value: string | Date) {
-  return new Date(value).toLocaleString("en-IN", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: true,
-  });
-}
-
-interface Driver {
+export interface Driver {
   _id: string;
   name: string;
   username: string;
@@ -30,7 +19,7 @@ interface Driver {
   } | null;
 }
 
-interface Vehicle {
+export interface Vehicle {
   _id: string;
   name: string;
   vehicleNumber: string;
@@ -51,6 +40,8 @@ export interface Customer {
   cashPerCan?: number;
   securityDeposit?: number;
   isActive: boolean;
+  // Soft-deleted customers are still returned by the detail route.
+  isDeleted?: boolean;
   registeredDate?: string;
   createdAt: string;
 }
@@ -69,7 +60,6 @@ export interface PaginatedCustomers {
 export interface SupplyLog {
   _id: string;
   suppliedAt: string;
-  formattedSuppliedAt?: string;
   pointName?: string;
   cansDelivered?: number;
   cansTakenBack?: number;
@@ -106,14 +96,6 @@ export interface SupplyLog {
   };
 }
 
-interface PaginatedSupplyLogs {
-  logs: SupplyLog[];
-  total: number;
-  page: number;
-  limit: number;
-  totalPages: number;
-}
-
 export interface PaginatedSupplyLogsWithStats {
   logs: SupplyLog[];
   total: number;
@@ -130,6 +112,11 @@ export interface PaginatedSupplyLogsWithStats {
     uniqueDrivers: number;
     uniqueCustomers: number;
   };
+}
+
+// "Home" / "Office" / "Both" for a customer's location type; undefined when unset.
+export function locationTypeLabel(lt?: string): string | undefined {
+  return lt === "home" ? "Home" : lt === "office" ? "Office" : lt === "both" ? "Both" : undefined;
 }
 
 const DRIVERS_KEY = ["admin", "drivers"];
@@ -210,45 +197,6 @@ export function useAdminPaginatedCustomers(params: {
   });
 }
 
-export function useAdminTodayStats(todayIso: string) {
-  return useQuery({
-    queryKey: ["admin", "stats", todayIso],
-    staleTime: 1000 * 60,
-    queryFn: async () => {
-      const res = await fetch(`/api/admin/stats?date=${encodeURIComponent(todayIso)}`, { cache: "no-store" });
-      if (!res.ok) throw new Error("Failed to load dashboard stats");
-      const data = (await res.json()) as { drivers: number; vehicles: number; todayDeliveries: number; customers: number };
-      return {
-        drivers: data.drivers,
-        vehicles: data.vehicles,
-        todayDeliveries: data.todayDeliveries,
-        customers: data.customers,
-      };
-    },
-  });
-}
-
-export function useAdminPaginatedSupplies(page: number, limit: number) {
-  return useQuery<PaginatedSupplyLogs>({
-    queryKey: ["admin", "supplies", "paginated", page, limit],
-    staleTime: 1000 * 30,
-    placeholderData: keepPreviousData,
-    queryFn: async () => {
-      const res = await fetch(`/api/admin/supplies?page=${page}&limit=${limit}&logType=water`, { cache: "no-store" });
-      if (!res.ok) {
-        throw new Error("Failed to load recent supplies");
-      }
-      const data = (await res.json()) as PaginatedSupplyLogs;
-      const baseLogs = Array.isArray(data.logs) ? data.logs : [];
-      const logsWithFormatted = baseLogs.map((log) => ({
-        ...log,
-        formattedSuppliedAt: log.formattedSuppliedAt ?? formatDateTime(log.suppliedAt),
-      }));
-      return { ...data, logs: logsWithFormatted };
-    },
-  });
-}
-
 const SUPPLIES_PAGE_LIMIT = 50;
 
 type SupplyFilters = {
@@ -292,18 +240,25 @@ export async function fetchAllSupplies(logType: "water" | "cash", filters: Suppl
   return (await res.json()) as SupplyLog[];
 }
 
-export function useAdminAddedSupplies(
+// The key segment each list has always used, so the Deliveries page's
+// invalidations keep matching.
+const SUPPLY_LIST_KEY = { water: "added", cash: "cash-credits" } as const;
+
+// One page of the Deliveries (water) or Cash Credits (cash) list. Rows are
+// returned as the API sends them; pages format dates when they render.
+export function useAdminSupplyList(
+  logType: "water" | "cash",
   filters: SupplyFilters,
   page: number,
   options?: { enabled?: boolean }
 ) {
   return useQuery<PaginatedSupplyLogsWithStats>({
-    queryKey: ["admin", "supplies", "added", filters, page],
+    queryKey: ["admin", "supplies", SUPPLY_LIST_KEY[logType], filters, page],
     staleTime: 1000 * 30,
     enabled: options?.enabled ?? true,
     placeholderData: keepPreviousData,
     queryFn: async () => {
-      const params = supplyFilterParams("water", filters);
+      const params = supplyFilterParams(logType, filters);
       params.set("page", String(page));
       params.set("limit", String(SUPPLIES_PAGE_LIMIT));
 
@@ -311,16 +266,20 @@ export function useAdminAddedSupplies(
         cache: "no-store",
       });
       if (!res.ok) {
-        throw new Error("Failed to fetch water supplies");
+        throw new Error(logType === "water" ? "Failed to fetch water supplies" : "Failed to fetch cash credits");
       }
       const data = (await res.json()) as PaginatedSupplyLogsWithStats;
-      const logs = (data.logs ?? []).map((log) => ({
-        ...log,
-        formattedSuppliedAt: log.formattedSuppliedAt ?? formatDateTime(log.suppliedAt),
-      }));
-      return { ...data, logs };
+      return { ...data, logs: data.logs ?? [] };
     },
   });
+}
+
+export function useAdminAddedSupplies(
+  filters: SupplyFilters,
+  page: number,
+  options?: { enabled?: boolean }
+) {
+  return useAdminSupplyList("water", filters, page, options);
 }
 
 export function useAdminCashCredits(
@@ -335,33 +294,11 @@ export function useAdminCashCredits(
   page: number,
   options?: { enabled?: boolean }
 ) {
-  return useQuery<PaginatedSupplyLogsWithStats>({
-    queryKey: ["admin", "supplies", "cash-credits", filters, page],
-    staleTime: 1000 * 30,
-    enabled: options?.enabled ?? true,
-    placeholderData: keepPreviousData,
-    queryFn: async () => {
-      const params = supplyFilterParams("cash", filters);
-      params.set("page", String(page));
-      params.set("limit", String(SUPPLIES_PAGE_LIMIT));
-
-      const res = await fetch(`/api/admin/supplies?${params.toString()}`, {
-        cache: "no-store",
-      });
-      if (!res.ok) {
-        throw new Error("Failed to fetch cash credits");
-      }
-      const data = (await res.json()) as PaginatedSupplyLogsWithStats;
-      const logs = (data.logs ?? []).map((log) => ({
-        ...log,
-        formattedSuppliedAt: log.formattedSuppliedAt ?? formatDateTime(log.suppliedAt),
-      }));
-      return { ...data, logs };
-    },
-  });
+  return useAdminSupplyList("cash", filters, page, options);
 }
 
-// Single customer details for the history page
+// Single customer details for the history page. The error carries the HTTP
+// status so the page can tell "not found" from "failed to load".
 export function useAdminCustomerDetail(customerId: string) {
   return useQuery<Customer>({
     queryKey: ["admin", "customers", "detail", customerId],
@@ -371,7 +308,9 @@ export function useAdminCustomerDetail(customerId: string) {
     queryFn: async () => {
       const res = await fetch(`/api/admin/customers/${customerId}`, { cache: "no-store" });
       if (!res.ok) {
-        throw new Error("Failed to fetch customer");
+        const error = new Error("Failed to fetch customer") as Error & { status?: number };
+        error.status = res.status;
+        throw error;
       }
       return (await res.json()) as Customer;
     },
@@ -404,11 +343,7 @@ export function useAdminCustomerHistory(
         throw new Error("Failed to fetch customer history");
       }
       const data = (await res.json()) as PaginatedSupplyLogsWithStats;
-      const logs = (data.logs ?? []).map((log) => ({
-        ...log,
-        formattedSuppliedAt: log.formattedSuppliedAt ?? formatDateTime(log.suppliedAt),
-      }));
-      return { ...data, logs };
+      return { ...data, logs: data.logs ?? [] };
     },
   });
 }
@@ -453,8 +388,4 @@ export function useAdminNewCustomers(rangeQuery: string, options?: { enabled?: b
       return (await res.json()) as NewCustomersResponse;
     },
   });
-}
-
-export function useAdminQueryClient() {
-  return useQueryClient();
 }

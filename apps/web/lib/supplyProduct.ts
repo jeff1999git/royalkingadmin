@@ -125,7 +125,8 @@ export function autoAmount(
     return Math.round(q.casesDelivered * q.casePrice * 100) / 100;
   }
   const rate = customer?.cashPerCan;
-  return q.cansDelivered !== undefined && rate !== undefined ? q.cansDelivered * rate : undefined;
+  // Rounded to paise: a decimal rate would otherwise store 30.299999999999997.
+  return q.cansDelivered !== undefined && rate !== undefined ? Math.round(q.cansDelivered * rate * 100) / 100 : undefined;
 }
 
 // "3 × ₹120 = ₹360" preview for the case forms, or null until both are valid.

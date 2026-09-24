@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Types } from "mongoose";
-import { getServerSession } from "next-auth";
-import { authOptions } from "../../../../../lib/auth";
+import { badRequest, serverError, unauthorized } from "../../../../../lib/api";
+import { requireAdmin } from "../../../../../lib/authHelpers";
 import { newCustomerMatch, resolveAnalyticsRange } from "../../../../../lib/analyticsRange";
 import { connectToDatabase } from "../../../../../lib/mongodb";
 import Customer from "../../../../../models/Customer";
@@ -19,15 +19,11 @@ type AddedBy =
 // Takes the same ?from&to or ?days params as /api/admin/analytics and uses
 // the same window and match, so the list always adds up to that number.
 export async function GET(req: NextRequest) {
-  const session = await getServerSession(authOptions);
-  if (!session || session.user.role !== "admin") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const admin = await requireAdmin();
+  if (!admin) return unauthorized();
 
   const range = resolveAnalyticsRange(req.nextUrl.searchParams);
-  if (!range) {
-    return NextResponse.json({ error: "Invalid date range." }, { status: 400 });
-  }
+  if (!range) return badRequest("Invalid date range.");
   const match = newCustomerMatch(range);
 
   try {
@@ -71,7 +67,6 @@ export async function GET(req: NextRequest) {
       customers: list,
     });
   } catch (err) {
-    console.error("[analytics new-customers GET]", err);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    return serverError(err);
   }
 }
