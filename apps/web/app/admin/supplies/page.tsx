@@ -1,7 +1,7 @@
 "use client";
 
 /* eslint-disable @next/next/no-img-element */
-import { memo, useCallback, useEffect, useMemo, useState, type KeyboardEvent } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import Link from "next/link";
 import { useQueryClient } from "@tanstack/react-query";
 import { formatDateTime, formatMoney, formatNumber, istDayKey, istToday, relativeDayLabel } from "../../../lib/format";
@@ -313,6 +313,9 @@ export default function SuppliesPage() {
   const [editSaving, setEditSaving] = useState(false);
   const [exportBusy, setExportBusy] = useState<"" | "photo" | "pdf" | "sheet" | "drive">("");
   const [driveSheetLink, setDriveSheetLink] = useState<string | null>(null);
+  const [downloadMenuOpen, setDownloadMenuOpen] = useState(false);
+  const [showFilters, setShowFilters] = useState(false);
+  const downloadMenuRef = useRef<HTMLDivElement>(null);
   const [deleteSaving, setDeleteSaving] = useState(false);
   const [confirmDeleteLog, setConfirmDeleteLog] = useState<SupplyLog | null>(null);
 
@@ -366,15 +369,34 @@ export default function SuppliesPage() {
   const queryClient = useQueryClient();
 
   // Escape closes the top-most open dialog.
-  const anyDialogOpen = Boolean(confirmDeleteLog || expandedImageUrl || editingLog || selectedLog || showAddForm);
+  const anyDialogOpen = Boolean(downloadMenuOpen || confirmDeleteLog || expandedImageUrl || editingLog || selectedLog || showAddForm);
   const closeTopDialog = useCallback(() => {
-    if (confirmDeleteLog) setConfirmDeleteLog(null);
+    if (downloadMenuOpen) setDownloadMenuOpen(false);
+    else if (confirmDeleteLog) setConfirmDeleteLog(null);
     else if (expandedImageUrl) setExpandedImageUrl(null);
     else if (editingLog) { setEditingLog(null); setEditError(""); }
     else if (selectedLog) { setSelectedLog(null); setDetailError(""); }
     else if (showAddForm) setShowAddForm(false);
-  }, [confirmDeleteLog, expandedImageUrl, editingLog, selectedLog, showAddForm]);
+  }, [downloadMenuOpen, confirmDeleteLog, expandedImageUrl, editingLog, selectedLog, showAddForm]);
   useEscapeKey(closeTopDialog, anyDialogOpen);
+
+  // A click or tap anywhere outside the Download menu closes it.
+  useEffect(() => {
+    if (!downloadMenuOpen) return;
+    function onPointerDown(e: PointerEvent) {
+      if (!downloadMenuRef.current?.contains(e.target as Node)) setDownloadMenuOpen(false);
+    }
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [downloadMenuOpen]);
+
+  // Number of filters in use on this tab, shown on the Filter button.
+  const activeFilterCount = [
+    filters.date,
+    filters.month,
+    filters.driver,
+    ...(supplyTab === "water" ? [filters.customer, filters.paymentStatus, filters.productType] : []),
+  ].filter(Boolean).length;
 
   async function downloadImageToDevice(imageUrl?: string | null) {
     if (!imageUrl) return;
@@ -521,12 +543,14 @@ export default function SuppliesPage() {
   // Google Sheet. Google's sign-in script is loaded only when this is used.
   async function handleSaveToDrive() {
     setError("");
+    setNotice("");
     setDriveSheetLink(null);
     setExportBusy("drive");
     try {
       const drive = await import("../../../lib/googleDrive");
       if (!drive.googleClientId) {
-        setError("Saving to Google Drive isn't set up yet: add NEXT_PUBLIC_GOOGLE_CLIENT_ID (see the README).");
+        // Needs NEXT_PUBLIC_GOOGLE_CLIENT_ID (see the README).
+        setNotice("This feature is not available yet.");
         return;
       }
       await drive.loadGoogleIdentity();
@@ -775,29 +799,51 @@ export default function SuppliesPage() {
                 + Add Delivery
               </button>
             )}
-            <button type="button" className="btn btn-secondary btn-sm" onClick={() => void handleDownloadImage()} disabled={exportBusy !== ""}>
-              {exportBusy === "photo" ? "Preparing..." : "Download Photo"}
-            </button>
-            <button type="button" className="btn btn-secondary btn-sm" onClick={() => void handleDownloadPdf()} disabled={exportBusy !== ""}>
-              {exportBusy === "pdf" ? "Preparing..." : "Download PDF"}
-            </button>
+            <div ref={downloadMenuRef} style={{ position: "relative" }}>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={() => setDownloadMenuOpen((o) => !o)}
+                disabled={exportBusy !== ""}
+                aria-haspopup="menu"
+                aria-expanded={downloadMenuOpen}
+              >
+                {exportBusy === "drive" ? "Saving to Drive..." : exportBusy !== "" ? "Preparing..." : "Download ▾"}
+              </button>
+              {downloadMenuOpen && (
+                <div
+                  role="menu"
+                  style={{
+                    position: "absolute", top: "calc(100% + 6px)", left: 0, zIndex: 50,
+                    minWidth: "210px", background: "#ffffff", borderRadius: "12px",
+                    border: "1px solid var(--border-color, #e5e7eb)",
+                    boxShadow: "0 10px 30px rgba(15, 23, 42, 0.15)", padding: "0.3rem 0", overflow: "hidden",
+                  }}
+                >
+                  <button type="button" role="menuitem" className="download-menu-item" onClick={() => { setDownloadMenuOpen(false); void handleDownloadImage(); }}>
+                    Download Photo
+                  </button>
+                  <button type="button" role="menuitem" className="download-menu-item" onClick={() => { setDownloadMenuOpen(false); void handleDownloadPdf(); }}>
+                    Download PDF
+                  </button>
+                  <button type="button" role="menuitem" className="download-menu-item" onClick={() => { setDownloadMenuOpen(false); void handleDownloadSheet(); }}
+                    title="Spreadsheet (.csv) of every entry matching the filters. Opens in Google Sheets or Excel.">
+                    Download Sheet
+                  </button>
+                  <button type="button" role="menuitem" className="download-menu-item" onClick={() => { setDownloadMenuOpen(false); void handleSaveToDrive(); }} title="Save every entry matching the filters as a Google Sheet in your Google Drive.">
+                    Save to Google Drive
+                  </button>
+                </div>
+              )}
+            </div>
             <button
               type="button"
-              className="btn btn-secondary btn-sm"
-              onClick={() => void handleDownloadSheet()}
-              disabled={exportBusy !== ""}
-              title="Spreadsheet (.csv) of every entry matching the filters. Opens in Google Sheets or Excel."
+              className={showFilters || activeFilterCount > 0 ? "btn btn-primary btn-sm" : "btn btn-secondary btn-sm"}
+              onClick={() => setShowFilters((v) => !v)}
+              aria-expanded={showFilters}
+              aria-controls="delivery-filters"
             >
-              {exportBusy === "sheet" ? "Preparing..." : "Download Sheet"}
-            </button>
-            <button
-              type="button"
-              className="btn btn-secondary btn-sm"
-              onClick={() => void handleSaveToDrive()}
-              disabled={exportBusy !== ""}
-              title="Save every entry matching the filters as a Google Sheet in your Google Drive."
-            >
-              {exportBusy === "drive" ? "Saving to Drive..." : "Save to Google Drive"}
+              Filter{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""} {showFilters ? "▴" : "▾"}
             </button>
           </div>
           {driveSheetLink && (
@@ -810,115 +856,117 @@ export default function SuppliesPage() {
           )}
         </div>
 
-      <div className="card" style={{ marginBottom: "1rem" }}>
-        <div className="grid-3" style={{ marginBottom: "0.75rem" }}>
-          <div className="form-group">
-            <label className="form-label" htmlFor="filterDate">Date</label>
-            <input
-              id="filterDate"
-              type="date"
-              className="form-input"
-              value={filters.date}
-              max={maxDate}
-              onChange={(e) =>
-                setFilters((f) => ({
-                  ...f,
-                  date: e.target.value,
-                  month: e.target.value ? "" : f.month,
-                }))
-              }
-            />
-          </div>
-          <div className="form-group">
-            <label className="form-label" htmlFor="filterMonth">Month</label>
-            <input
-              id="filterMonth"
-              type="month"
-              className="form-input"
-              value={filters.month}
-              max={maxMonth}
-              onChange={(e) =>
-                setFilters((f) => ({
-                  ...f,
-                  month: e.target.value,
-                  date: e.target.value ? "" : f.date,
-                }))
-              }
-            />
-          </div>
-          <div className="form-group">
-            <label className="form-label" htmlFor="filterDriver">Driver</label>
-            <select
-              id="filterDriver"
-              className="form-select"
-              value={filters.driver}
-              onChange={(e) => setFilters((f) => ({ ...f, driver: e.target.value }))}
-            >
-              <option value="">All Drivers</option>
-              {(driverOptions ?? []).map((driver) => (
-                <option key={driver._id} value={driver._id}>
-                  {driver.name} (@{driver.username})
-                </option>
-              ))}
-            </select>
-          </div>
-          {supplyTab === "water" && (
+      {showFilters && (
+        <div id="delivery-filters" className="card" style={{ marginBottom: "1rem" }}>
+          <div className="grid-3" style={{ marginBottom: "0.75rem" }}>
             <div className="form-group">
-              <label className="form-label" htmlFor="filterCustomer">Customer</label>
+              <label className="form-label" htmlFor="filterDate">Date</label>
+              <input
+                id="filterDate"
+                type="date"
+                className="form-input"
+                value={filters.date}
+                max={maxDate}
+                onChange={(e) =>
+                  setFilters((f) => ({
+                    ...f,
+                    date: e.target.value,
+                    month: e.target.value ? "" : f.month,
+                  }))
+                }
+              />
+            </div>
+            <div className="form-group">
+              <label className="form-label" htmlFor="filterMonth">Month</label>
+              <input
+                id="filterMonth"
+                type="month"
+                className="form-input"
+                value={filters.month}
+                max={maxMonth}
+                onChange={(e) =>
+                  setFilters((f) => ({
+                    ...f,
+                    month: e.target.value,
+                    date: e.target.value ? "" : f.date,
+                  }))
+                }
+              />
+            </div>
+            <div className="form-group">
+              <label className="form-label" htmlFor="filterDriver">Driver</label>
               <select
-                id="filterCustomer"
+                id="filterDriver"
                 className="form-select"
-                value={filters.customer}
-                onChange={(e) => setFilters((f) => ({ ...f, customer: e.target.value }))}
+                value={filters.driver}
+                onChange={(e) => setFilters((f) => ({ ...f, driver: e.target.value }))}
               >
-                <option value="">All Customers</option>
-                {sortedCustomers.map((c) => (
-                  <option key={c._id} value={c._id}>
-                    {c.name}{c.area ? ` - ${c.area}` : ""}{c.isActive ? "" : " (inactive)"}
+                <option value="">All Drivers</option>
+                {(driverOptions ?? []).map((driver) => (
+                  <option key={driver._id} value={driver._id}>
+                    {driver.name} (@{driver.username})
                   </option>
                 ))}
               </select>
             </div>
-          )}
-          {supplyTab === "water" && (
-            <div className="form-group">
-              <label className="form-label" htmlFor="filterPaymentStatus">Payment Method</label>
-              <select
-                id="filterPaymentStatus"
-                className="form-select"
-                value={filters.paymentStatus}
-                onChange={(e) => setFilters((f) => ({ ...f, paymentStatus: e.target.value as Filters["paymentStatus"] }))}
-              >
-                <option value="">All</option>
-                <option value="cash">Cash</option>
-                <option value="upi">UPI</option>
-                <option value="not_paid">Not Paid</option>
-              </select>
-            </div>
-          )}
-          {supplyTab === "water" && (
-            <div className="form-group">
-              <label className="form-label" htmlFor="filterProductType">Product</label>
-              <select
-                id="filterProductType"
-                className="form-select"
-                value={filters.productType}
-                onChange={(e) => setFilters((f) => ({ ...f, productType: e.target.value as Filters["productType"] }))}
-              >
-                <option value="">All Products</option>
-                <option value="can">Cans</option>
-                <option value="case">Cases</option>
-              </select>
-            </div>
-          )}
-        </div>
+            {supplyTab === "water" && (
+              <div className="form-group">
+                <label className="form-label" htmlFor="filterCustomer">Customer</label>
+                <select
+                  id="filterCustomer"
+                  className="form-select"
+                  value={filters.customer}
+                  onChange={(e) => setFilters((f) => ({ ...f, customer: e.target.value }))}
+                >
+                  <option value="">All Customers</option>
+                  {sortedCustomers.map((c) => (
+                    <option key={c._id} value={c._id}>
+                      {c.name}{c.area ? ` - ${c.area}` : ""}{c.isActive ? "" : " (inactive)"}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+            {supplyTab === "water" && (
+              <div className="form-group">
+                <label className="form-label" htmlFor="filterPaymentStatus">Payment Method</label>
+                <select
+                  id="filterPaymentStatus"
+                  className="form-select"
+                  value={filters.paymentStatus}
+                  onChange={(e) => setFilters((f) => ({ ...f, paymentStatus: e.target.value as Filters["paymentStatus"] }))}
+                >
+                  <option value="">All</option>
+                  <option value="cash">Cash</option>
+                  <option value="upi">UPI</option>
+                  <option value="not_paid">Not Paid</option>
+                </select>
+              </div>
+            )}
+            {supplyTab === "water" && (
+              <div className="form-group">
+                <label className="form-label" htmlFor="filterProductType">Product</label>
+                <select
+                  id="filterProductType"
+                  className="form-select"
+                  value={filters.productType}
+                  onChange={(e) => setFilters((f) => ({ ...f, productType: e.target.value as Filters["productType"] }))}
+                >
+                  <option value="">All Products</option>
+                  <option value="can">Cans</option>
+                  <option value="case">Cases</option>
+                </select>
+              </div>
+            )}
+          </div>
 
-        <div style={{ display: "flex", alignItems: "end" }}>
-          <button type="button" className="btn btn-secondary" onClick={clearFilters}>
-            Clear Filters
-          </button>
+          <div style={{ display: "flex", alignItems: "end" }}>
+            <button type="button" className="btn btn-secondary" onClick={clearFilters}>
+              Clear Filters
+            </button>
+          </div>
         </div>
-      </div>
+      )}
 
       <div
         className="card"
