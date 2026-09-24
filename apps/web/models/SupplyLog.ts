@@ -81,6 +81,8 @@ SupplyLogSchema.index({ suppliedAt: -1 });
 SupplyLogSchema.index({ logType: 1, suppliedAt: -1 });
 SupplyLogSchema.index({ logType: 1, driver: 1, suppliedAt: -1 });
 SupplyLogSchema.index({ customer: 1, suppliedAt: -1 });
+// Deliveries list and analytics filtered by vehicle.
+SupplyLogSchema.index({ vehicle: 1, suppliedAt: -1 });
 
 const SupplyLog =
   (models.SupplyLog as Model<SupplyLogDocument>) ||

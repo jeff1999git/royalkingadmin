@@ -2,7 +2,8 @@
 
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useAdminQueryClient, useAdminVehicles } from "../../hooks/useAdminQueries";
+import { useQueryClient } from "@tanstack/react-query";
+import { useAdminVehicles } from "../../hooks/useAdminQueries";
 
 export default function VehiclesPage() {
   const router = useRouter();
@@ -13,7 +14,7 @@ export default function VehiclesPage() {
   const [formSuccess, setFormSuccess] = useState("");
 
   const { data: vehicles, isLoading: isVehiclesLoading } = useAdminVehicles();
-  const queryClient = useAdminQueryClient();
+  const queryClient = useQueryClient();
 
   function maskName(name: string) {
     return name.length > 12 ? `${name.slice(0, 12)}...` : name;
@@ -87,7 +88,7 @@ export default function VehiclesPage() {
                   className="form-input"
                   value={formData.name}
                   onChange={(e) => setFormData((d) => ({ ...d, name: e.target.value }))}
-                  placeholder="e.g. 1"
+                  placeholder="e.g. KL 07 AB 1234"
                   required
                 />
               </div>

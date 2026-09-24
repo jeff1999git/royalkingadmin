@@ -2,7 +2,10 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { formatNumber } from "../../../../lib/format";
+import { useEscapeKey } from "../../../hooks/useEscapeKey";
 
 interface OdometerEntry {
   reading: number;
@@ -21,11 +24,13 @@ interface VehicleDetail {
   createdAt: string;
 }
 
-function OdometerLineChart({ history }: { history: OdometerEntry[] }) {
-  const sorted = [...history].sort(
-    (a, b) => new Date(a.recordedAt).getTime() - new Date(b.recordedAt).getTime()
-  );
+// Every point gets a date label up to 8 entries, then every 2nd, then about 8 in all.
+function labelIntervalFor(n: number) {
+  return n <= 8 ? 1 : n <= 16 ? 2 : Math.ceil(n / 8);
+}
 
+// `sorted` is the odometer history oldest first; the page sorts it once.
+function OdometerLineChart({ sorted }: { sorted: OdometerEntry[] }) {
   if (sorted.length < 2) {
     return (
       <p style={{ fontSize: "0.83rem", color: "var(--text-muted)", textAlign: "center", padding: "1.5rem 0" }}>
@@ -59,6 +64,7 @@ function OdometerLineChart({ history }: { history: OdometerEntry[] }) {
 
   const yTicks = 4;
   const yTickValues = Array.from({ length: yTicks + 1 }, (_, i) => Math.round(minKm + (kmRange / yTicks) * i));
+  const labelInterval = labelIntervalFor(points.length);
 
   return (
     <svg
@@ -79,7 +85,7 @@ function OdometerLineChart({ history }: { history: OdometerEntry[] }) {
           <g key={v}>
             <line x1={PAD.left} y1={y} x2={W - PAD.right} y2={y} stroke="var(--border)" strokeWidth="0.8" strokeDasharray="4,3" />
             <text x={PAD.left - 8} y={y + 4} textAnchor="end" fontSize="10" fill="var(--text-muted)">
-              {v.toLocaleString("en-IN")}
+              {formatNumber(v)}
             </text>
           </g>
         );
@@ -94,34 +100,25 @@ function OdometerLineChart({ history }: { history: OdometerEntry[] }) {
       {/* Line */}
       <path d={linePath} fill="none" stroke="var(--accent-primary)" strokeWidth="2.2" strokeLinejoin="round" strokeLinecap="round" />
 
-      {/* Dots + X labels */}
+      {/* Dots, each with at most one date label; the reading is the dot's tooltip */}
       {points.map((p, i) => (
         <g key={i}>
-          <circle cx={p.x} cy={p.y} r="4" fill="var(--accent-primary)" stroke="#fff" strokeWidth="1.5" />
-          <text x={p.x} y={p.y - 10} textAnchor="middle" fontSize="9" fill="var(--text-secondary)" fontWeight="700">
-            {p.reading.toLocaleString("en-IN")}
-          </text>
-          <text
-            x={p.x}
-            y={H - 6}
-            textAnchor="middle"
-            fontSize="9"
-            fill="var(--text-muted)"
-            transform={points.length > 8 ? `rotate(-35,${p.x},${H - 6})` : undefined}
-          >
-            {new Date(p.date).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
-          </text>
+          <circle cx={p.x} cy={p.y} r="4" fill="var(--accent-primary)" stroke="#fff" strokeWidth="1.5">
+            <title>{`${formatNumber(p.reading)} km`}</title>
+          </circle>
+          {(i % labelInterval === 0 || i === points.length - 1) && (
+            <text x={p.x} y={H - 6} textAnchor="middle" fontSize="9" fill="var(--text-muted)">
+              {new Date(p.date).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
+            </text>
+          )}
         </g>
       ))}
     </svg>
   );
 }
 
-function OdometerChart({ history }: { history: OdometerEntry[] }) {
-  const sorted = [...history].sort(
-    (a, b) => new Date(a.recordedAt).getTime() - new Date(b.recordedAt).getTime()
-  );
-
+// `sorted` is the odometer history oldest first; the page sorts it once.
+function OdometerChart({ sorted }: { sorted: OdometerEntry[] }) {
   const deltas = sorted.slice(1).map((entry, i) => ({
     date: entry.recordedAt,
     km: Math.max(0, entry.reading - (sorted[i]?.reading ?? 0)),
@@ -143,6 +140,7 @@ function OdometerChart({ history }: { history: OdometerEntry[] }) {
   const barW = Math.max(12, Math.min(40, chartW / deltas.length - 8));
   const step = chartW / deltas.length;
   const ticks = [0, Math.round(maxKm / 2), maxKm];
+  const labelInterval = labelIntervalFor(deltas.length);
 
   return (
     <svg
@@ -180,9 +178,11 @@ function OdometerChart({ history }: { history: OdometerEntry[] }) {
                 {d.km}
               </text>
             )}
-            <text x={cx} y={H - 6} textAnchor="middle" fontSize="8.5" fill="var(--text-muted)">
-              {new Date(d.date).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
-            </text>
+            {(i % labelInterval === 0 || i === deltas.length - 1) && (
+              <text x={cx} y={H - 6} textAnchor="middle" fontSize="8.5" fill="var(--text-muted)">
+                {new Date(d.date).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
+              </text>
+            )}
           </g>
         );
       })}
@@ -193,6 +193,7 @@ function OdometerChart({ history }: { history: OdometerEntry[] }) {
 export default function VehicleDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
+  const queryClient = useQueryClient();
 
   const [vehicle, setVehicle] = useState<VehicleDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -203,14 +204,17 @@ export default function VehicleDetailPage() {
   const [editData, setEditData] = useState({ name: "", vehicleNumber: "", capacity: "", isActive: true });
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState("");
+  const closeEdit = useCallback(() => setEditOpen(false), []);
+  useEscapeKey(closeEdit, editOpen);
 
   // Action states
   const [toggling, setToggling] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [actionError, setActionError] = useState("");
 
+  // Only the first load blanks the page; refreshes after an edit or toggle
+  // keep the current vehicle on screen.
   const load = useCallback(async () => {
-    setLoading(true);
     setError("");
     try {
       const res = await fetch(`/api/admin/vehicles/${id}`, { cache: "no-store" });
@@ -229,6 +233,22 @@ export default function VehicleDetailPage() {
   }, [id]);
 
   useEffect(() => { void load(); }, [load]);
+
+  // The vehicles list and the drivers list (assigned vehicle) cache for ten
+  // minutes; tell them about the change.
+  function invalidateLists() {
+    void queryClient.invalidateQueries({ queryKey: ["admin", "vehicles"] });
+    void queryClient.invalidateQueries({ queryKey: ["admin", "drivers"] });
+  }
+
+  // Sorted once per load: oldest first for the charts, newest first for the list.
+  const odometerHistory = vehicle?.odometerHistory;
+  const { history, newestFirst } = useMemo(() => {
+    const asc = [...(odometerHistory ?? [])].sort(
+      (a, b) => new Date(a.recordedAt).getTime() - new Date(b.recordedAt).getTime()
+    );
+    return { history: asc, newestFirst: [...asc].reverse() };
+  }, [odometerHistory]);
 
   function openEdit() {
     if (!vehicle) return;
@@ -258,6 +278,7 @@ export default function VehicleDetailPage() {
         return;
       }
       setEditOpen(false);
+      invalidateLists();
       void load();
     } catch {
       setEditError("Failed to update vehicle. Please try again.");
@@ -281,6 +302,7 @@ export default function VehicleDetailPage() {
         setActionError(d.error ?? "Failed to update status.");
         return;
       }
+      invalidateLists();
       void load();
     } catch {
       setActionError("Failed to update status. Please try again.");
@@ -303,6 +325,7 @@ export default function VehicleDetailPage() {
         setDeleting(false);
         return;
       }
+      invalidateLists();
       router.push("/admin/vehicles");
     } catch {
       setActionError("Failed to delete vehicle. Please try again.");
@@ -331,11 +354,6 @@ export default function VehicleDetailPage() {
       </div>
     );
   }
-
-  const history = vehicle.odometerHistory ?? [];
-  const sortedHistory = [...history].sort(
-    (a, b) => new Date(b.recordedAt).getTime() - new Date(a.recordedAt).getTime()
-  );
 
   return (
     <div>
@@ -414,7 +432,7 @@ export default function VehicleDetailPage() {
             <div style={{ background: "var(--bg-secondary)", borderRadius: "10px", padding: "0.75rem 1.1rem", minWidth: "120px" }}>
               <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", fontWeight: 600, marginBottom: "0.25rem" }}>Current Reading</div>
               <div style={{ fontSize: "1.5rem", fontWeight: 800, color: "var(--accent-primary)", lineHeight: 1 }}>
-                {(vehicle.odometer ?? 0).toLocaleString("en-IN")}
+                {formatNumber(vehicle.odometer ?? 0)}
                 <span style={{ fontSize: "0.85rem", fontWeight: 600, color: "var(--text-muted)", marginLeft: "0.25rem" }}>km</span>
               </div>
             </div>
@@ -440,7 +458,7 @@ export default function VehicleDetailPage() {
               <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", fontWeight: 600, marginBottom: "0.5rem" }}>
                 Daily KMs Driven
               </div>
-              <OdometerChart history={history} />
+              <OdometerChart sorted={history} />
             </div>
           ) : (
             <div style={{ marginBottom: "1.5rem", fontSize: "0.85rem", color: "var(--text-muted)", padding: "1rem", background: "var(--bg-secondary)", borderRadius: "8px" }}>
@@ -452,11 +470,11 @@ export default function VehicleDetailPage() {
           <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", fontWeight: 600, marginBottom: "0.5rem" }}>
             Odometer History ({history.length} {history.length === 1 ? "entry" : "entries"})
           </div>
-          {sortedHistory.length === 0 ? (
+          {newestFirst.length === 0 ? (
             <div style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>No readings recorded yet.</div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem", maxHeight: "280px", overflowY: "auto" }}>
-              {sortedHistory.map((entry, i) => (
+              {newestFirst.map((entry, i) => (
                 <div
                   key={i}
                   style={{
@@ -469,7 +487,7 @@ export default function VehicleDetailPage() {
                   }}
                 >
                   <span style={{ fontWeight: 700, color: "var(--text-primary)" }}>
-                    {entry.reading.toLocaleString()} km
+                    {formatNumber(entry.reading)} km
                   </span>
                   <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
                     {i === 0 && (
@@ -497,7 +515,7 @@ export default function VehicleDetailPage() {
           <div style={{ fontWeight: 700, fontSize: "0.8rem", color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "1rem" }}>
             Odometer Trend — Days vs KMs
           </div>
-          <OdometerLineChart history={history} />
+          <OdometerLineChart sorted={history} />
         </div>
       )}
 
@@ -514,9 +532,9 @@ export default function VehicleDetailPage() {
           style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem", zIndex: 250 }}
           onClick={() => setEditOpen(false)}
         >
-          <div className="card" style={{ width: "100%", maxWidth: "500px" }} onClick={(e) => e.stopPropagation()}>
+          <div className="card" role="dialog" aria-modal="true" aria-labelledby="edit-vehicle-title" style={{ width: "100%", maxWidth: "500px" }} onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between" style={{ marginBottom: "1rem" }}>
-              <h3>Edit Vehicle</h3>
+              <h3 id="edit-vehicle-title">Edit Vehicle</h3>
               <button className="btn btn-sm btn-secondary" onClick={() => setEditOpen(false)}>Close</button>
             </div>
             <div className="grid-2" style={{ gap: "0.75rem", marginBottom: "1rem" }}>

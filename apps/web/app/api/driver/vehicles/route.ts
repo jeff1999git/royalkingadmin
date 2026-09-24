@@ -1,29 +1,31 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "../../../../lib/auth";
+import { serverError, unauthorized } from "../../../../lib/api";
+import { requireDriver } from "../../../../lib/authHelpers";
 import { connectToDatabase } from "../../../../lib/mongodb";
 import Vehicle from "../../../../models/Vehicle";
 import User from "../../../../models/User";
 
 export async function GET() {
-  const session = await getServerSession(authOptions);
-  if (!session || session.user.role !== "driver") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const driver = await requireDriver();
+  if (!driver) return unauthorized();
+
+  try {
+    await connectToDatabase();
+    const [vehicles, user] = await Promise.all([
+      Vehicle.find({ isActive: true })
+        .select("name vehicleNumber capacity")
+        .sort({ createdAt: -1 })
+        .lean(),
+      User.findById(driver.id).select("assignedVehicle").lean(),
+    ]);
+
+    return NextResponse.json({
+      vehicles,
+      assignedVehicleId: user?.assignedVehicle
+        ? String(user.assignedVehicle)
+        : null,
+    });
+  } catch (err) {
+    return serverError(err);
   }
-
-  await connectToDatabase();
-  const [vehicles, driver] = await Promise.all([
-    Vehicle.find({ isActive: true })
-      .select("name vehicleNumber capacity")
-      .sort({ createdAt: -1 })
-      .lean(),
-    User.findById(session.user.id).select("assignedVehicle").lean(),
-  ]);
-
-  return NextResponse.json({
-    vehicles,
-    assignedVehicleId: driver?.assignedVehicle
-      ? String(driver.assignedVehicle)
-      : null,
-  });
 }

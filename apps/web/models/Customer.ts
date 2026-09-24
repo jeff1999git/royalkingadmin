@@ -39,6 +39,8 @@ const CustomerSchema = new Schema<CustomerDocument>(
 
 CustomerSchema.index({ isActive: 1, name: 1 });
 CustomerSchema.index({ area: 1, isActive: 1 });
+// Analytics: registrations by window, and the New Customers list sorted newest first.
+CustomerSchema.index({ createdAt: -1 });
 
 const Customer =
   (models.Customer as Model<CustomerDocument>) ||

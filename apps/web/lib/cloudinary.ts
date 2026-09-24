@@ -62,6 +62,22 @@ function createSignature(
   return crypto.createHash("sha1").update(`${serialized}${apiSecret}`).digest("hex");
 }
 
+// Cloudinary must never hang a driver's request: a stalled call turns into a
+// clear, retryable error instead of a spinner until the platform gives up.
+const CLOUDINARY_TIMEOUT_MS = 20_000;
+
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMessage: string) {
+  try {
+    return await fetch(url, { ...init, signal: AbortSignal.timeout(CLOUDINARY_TIMEOUT_MS) });
+  } catch (error) {
+    const name = error instanceof Error ? error.name : "";
+    if (name === "TimeoutError" || name === "AbortError") {
+      throw new Error(timeoutMessage);
+    }
+    throw error;
+  }
+}
+
 export async function uploadImageToCloudinary(
   file: File,
   folder = "royal-king-water-supply/fuel-bills",
@@ -77,12 +93,13 @@ export async function uploadImageToCloudinary(
   formData.set("api_key", apiKey);
   formData.set("signature", signature);
 
-  const response = await fetch(
+  const response = await fetchWithTimeout(
     `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`,
     {
       method: "POST",
       body: formData,
     },
+    "Image upload timed out. Please try again.",
   );
 
   const payload = (await response.json()) as {
@@ -116,12 +133,13 @@ export async function deleteImageFromCloudinary(publicId?: string | null) {
   formData.set("api_key", apiKey);
   formData.set("signature", signature);
 
-  const response = await fetch(
+  const response = await fetchWithTimeout(
     `https://api.cloudinary.com/v1_1/${cloudName}/image/destroy`,
     {
       method: "POST",
       body: formData,
     },
+    "Image delete timed out. Please try again.",
   );
 
   if (!response.ok) {

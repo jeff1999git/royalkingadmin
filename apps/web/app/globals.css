@@ -117,6 +117,13 @@ h3 {
   box-shadow: var(--shadow-sm);
 }
 
+/* Log cards in the driver portal are buttons; keep the page font, not the browser's button font. */
+button.card {
+  font: inherit;
+  color: inherit;
+  width: 100%;
+}
+
 /* ───── Button ───── */
 .btn {
   display: inline-flex;
@@ -385,6 +392,12 @@ tbody tr.supply-row-noted > td:first-child {
   background: var(--success-light);
   color: var(--success);
   border: 1px solid rgba(21, 128, 61, 0.3);
+}
+
+.alert-info {
+  background: #eff6ff;
+  color: #1e40af;
+  border: 1px solid rgba(30, 64, 175, 0.25);
 }
 
 /* ───── Empty state ───── */

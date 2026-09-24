@@ -1,28 +1,18 @@
 "use client";
 
-import { useState, FormEvent, useEffect } from "react";
+import { useCallback, useState, FormEvent, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
-import { useAdminPaginatedCustomers, type Customer } from "../../hooks/useAdminQueries";
+import { locationTypeLabel, useAdminPaginatedCustomers, type Customer } from "../../hooks/useAdminQueries";
+import { istDayKey, istToday } from "../../../lib/format";
+import { useEscapeKey } from "../../hooks/useEscapeKey";
 
 const PAGE_LIMIT = 30;
 
-function todayISO(): string {
-  const d = new Date();
-  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
-}
-
+// The IST day of a stored date for <input type="date">, defaulting to today.
 function isoToDateInput(iso?: string | null): string {
-  if (!iso) return todayISO();
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return todayISO();
-  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+  return (iso && istDayKey(iso)) || istToday();
 }
-
-const locationTypeLabel = (lt?: string) =>
-  lt === "home" ? "Home" : lt === "office" ? "Office" : lt === "both" ? "Both" : undefined;
-
-const PAGINATED_KEY = ["admin", "customers", "paginated"];
 
 export default function CustomersPage() {
   const [page, setPage] = useState(1);
@@ -72,7 +62,7 @@ export default function CustomersPage() {
     subscriptionCans: "1",
     cashPerCan: "",
     securityDeposit: "",
-    registeredDate: todayISO(),
+    registeredDate: istToday(),
   });
   const [formError, setFormError] = useState("");
   const [formSuccess, setFormSuccess] = useState("");
@@ -91,7 +81,7 @@ export default function CustomersPage() {
     cashPerCan: "",
     securityDeposit: "",
     isActive: true,
-    registeredDate: todayISO(),
+    registeredDate: istToday(),
   });
   const [editError, setEditError] = useState("");
   const [editSaving, setEditSaving] = useState(false);
@@ -101,13 +91,20 @@ export default function CustomersPage() {
   const [deletingCustomer, setDeletingCustomer] = useState(false);
   const [pageError, setPageError] = useState("");
 
+  const closeForm = useCallback(() => setShowForm(false), []);
+  const closeConfirmDelete = useCallback(() => setConfirmDeleteCustomer(null), []);
+  const closeEdit = useCallback(() => setEditingCustomer(null), []);
+  useEscapeKey(closeForm, showForm);
+  useEscapeKey(closeConfirmDelete, Boolean(confirmDeleteCustomer));
+  useEscapeKey(closeEdit, Boolean(editingCustomer));
+
   async function safeJson(res: Response) {
     try { return await res.json() as { error?: string }; } catch { return {}; }
   }
 
+  // One prefix covers the paginated list, the detail pages and the full list
+  // used in dropdowns elsewhere.
   function invalidateCustomers() {
-    void queryClient.invalidateQueries({ queryKey: PAGINATED_KEY });
-    // also invalidate the full-list used in dropdowns elsewhere
     void queryClient.invalidateQueries({ queryKey: ["admin", "customers"] });
   }
 
@@ -137,7 +134,7 @@ export default function CustomersPage() {
       setSubmitting(false);
       if (!res.ok) { setFormError(d.error ?? "Failed to create customer"); return; }
       setFormSuccess("Customer created!");
-      setFormData({ name: "", phone: "", email: "", address: "", area: "", locationType: "home", subscriptionCans: "1", cashPerCan: "", securityDeposit: "", registeredDate: todayISO() });
+      setFormData({ name: "", phone: "", email: "", address: "", area: "", locationType: "home", subscriptionCans: "1", cashPerCan: "", securityDeposit: "", registeredDate: istToday() });
       invalidateCustomers();
       setTimeout(() => { setShowForm(false); setFormSuccess(""); }, 1500);
     } catch {
@@ -419,9 +416,9 @@ export default function CustomersPage() {
           style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem", zIndex: 250 }}
           onClick={() => setShowForm(false)}
         >
-          <div className="card" style={{ width: "100%", maxWidth: "520px", maxHeight: "90vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
+          <div className="card" role="dialog" aria-modal="true" aria-labelledby="add-customer-title" style={{ width: "100%", maxWidth: "520px", maxHeight: "90vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between" style={{ marginBottom: "1rem" }}>
-              <h3>Add Customer</h3>
+              <h3 id="add-customer-title">Add Customer</h3>
               <button type="button" className="btn btn-sm btn-secondary" onClick={() => setShowForm(false)}>Close</button>
             </div>
             <form onSubmit={(e) => void handleSubmit(e)}>
@@ -490,8 +487,8 @@ export default function CustomersPage() {
           style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem", zIndex: 400 }}
           onClick={() => setConfirmDeleteCustomer(null)}
         >
-          <div className="card" style={{ width: "100%", maxWidth: "400px" }} onClick={(e) => e.stopPropagation()}>
-            <h3 style={{ marginBottom: "0.75rem" }}>Delete Customer?</h3>
+          <div className="card" role="dialog" aria-modal="true" aria-labelledby="delete-customer-title" style={{ width: "100%", maxWidth: "400px" }} onClick={(e) => e.stopPropagation()}>
+            <h3 id="delete-customer-title" style={{ marginBottom: "0.75rem" }}>Delete Customer?</h3>
             <p style={{ color: "var(--text-secondary)", marginBottom: "0.75rem" }}>
               <strong>{confirmDeleteCustomer.name}</strong> will be removed from your customer list.
             </p>
@@ -514,9 +511,9 @@ export default function CustomersPage() {
           style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem", zIndex: 260 }}
           onClick={() => setEditingCustomer(null)}
         >
-          <div className="card" style={{ width: "100%", maxWidth: "520px", maxHeight: "90vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
+          <div className="card" role="dialog" aria-modal="true" aria-labelledby="edit-customer-title" style={{ width: "100%", maxWidth: "520px", maxHeight: "90vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between" style={{ marginBottom: "1rem" }}>
-              <h3>Edit Customer</h3>
+              <h3 id="edit-customer-title">Edit Customer</h3>
               <button type="button" className="btn btn-sm btn-secondary" onClick={() => setEditingCustomer(null)}>Close</button>
             </div>
             <div className="grid-2" style={{ marginBottom: "1rem" }}>

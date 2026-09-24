@@ -1,50 +1,57 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "../../../lib/auth";
+import { badRequest, optionalNumber, readJsonObject, serverError, unauthorized } from "../../../lib/api";
+import { getServerUser } from "../../../lib/authHelpers";
 import { connectToDatabase } from "../../../lib/mongodb";
 import Stock from "../../../models/Stock";
 
+const EMPTY_STOCK = { cans: 0, dispensers: 0, stands: 0 };
+
+// Stock is shared by the admin and every driver. A session whose role was
+// stripped (deactivated driver, see lib/auth.ts) is not signed in here either.
+async function requireAnyRole() {
+  const user = await getServerUser();
+  return user && (user.role === "admin" || user.role === "driver") ? user : null;
+}
+
 export async function GET() {
-  const session = await getServerSession(authOptions);
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const user = await requireAnyRole();
+  if (!user) return unauthorized();
+
+  try {
+    await connectToDatabase();
+
+    // Read-only: the first PATCH creates the document.
+    const stock = await Stock.findOne({}).lean();
+
+    return NextResponse.json(stock ?? EMPTY_STOCK);
+  } catch (err) {
+    return serverError(err);
   }
-
-  await connectToDatabase();
-
-  const stock = await Stock.findOneAndUpdate(
-    {},
-    { $setOnInsert: { cans: 0, dispensers: 0, stands: 0 } },
-    { upsert: true, new: true }
-  ).lean();
-
-  return NextResponse.json(stock);
 }
 
 export async function PATCH(req: NextRequest) {
-  const session = await getServerSession(authOptions);
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const user = await requireAnyRole();
+  if (!user) return unauthorized();
 
-  const body = (await req.json()) as { cans?: number; dispensers?: number; stands?: number };
+  const body = await readJsonObject(req);
+  if (!body) return badRequest("Invalid request body.");
 
-  const cans = body.cans !== undefined ? Math.floor(Number(body.cans)) : undefined;
-  const dispensers = body.dispensers !== undefined ? Math.floor(Number(body.dispensers)) : undefined;
-  const stands = body.stands !== undefined ? Math.floor(Number(body.stands)) : undefined;
+  const cans = body.cans !== undefined ? optionalNumber(body.cans) : undefined;
+  const dispensers = body.dispensers !== undefined ? optionalNumber(body.dispensers) : undefined;
+  const stands = body.stands !== undefined ? optionalNumber(body.stands) : undefined;
 
-  if (cans !== undefined && (!Number.isFinite(cans) || cans < 0)) {
-    return NextResponse.json({ error: "Cans must be a non-negative number." }, { status: 400 });
+  if (body.cans !== undefined && (cans === undefined || cans < 0)) {
+    return badRequest("Cans must be a non-negative number.");
   }
-  if (dispensers !== undefined && (!Number.isFinite(dispensers) || dispensers < 0)) {
-    return NextResponse.json({ error: "Dispensers must be a non-negative number." }, { status: 400 });
+  if (body.dispensers !== undefined && (dispensers === undefined || dispensers < 0)) {
+    return badRequest("Dispensers must be a non-negative number.");
   }
-  if (stands !== undefined && (!Number.isFinite(stands) || stands < 0)) {
-    return NextResponse.json({ error: "Stands must be a non-negative number." }, { status: 400 });
+  if (body.stands !== undefined && (stands === undefined || stands < 0)) {
+    return badRequest("Stands must be a non-negative number.");
   }
 
   const updatedBy =
-    session.user.role === "admin" ? "Admin" : (session.user.name ?? "Driver");
+    user.role === "admin" ? "Admin" : (user.name ?? "Driver");
 
   const setPayload: {
     cans?: number;
@@ -52,17 +59,21 @@ export async function PATCH(req: NextRequest) {
     stands?: number;
     updatedBy: string;
   } = { updatedBy };
-  if (cans !== undefined) setPayload.cans = cans;
-  if (dispensers !== undefined) setPayload.dispensers = dispensers;
-  if (stands !== undefined) setPayload.stands = stands;
+  if (cans !== undefined) setPayload.cans = Math.floor(cans);
+  if (dispensers !== undefined) setPayload.dispensers = Math.floor(dispensers);
+  if (stands !== undefined) setPayload.stands = Math.floor(stands);
 
-  await connectToDatabase();
+  try {
+    await connectToDatabase();
 
-  const updated = await Stock.findOneAndUpdate(
-    {},
-    { $set: setPayload },
-    { upsert: true, new: true }
-  ).lean();
+    const updated = await Stock.findOneAndUpdate(
+      {},
+      { $set: setPayload },
+      { upsert: true, returnDocument: "after" }
+    ).lean();
 
-  return NextResponse.json(updated);
+    return NextResponse.json(updated);
+  } catch (err) {
+    return serverError(err);
+  }
 }

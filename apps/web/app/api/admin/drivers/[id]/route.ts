@@ -1,39 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Types } from "mongoose";
-import { getServerSession } from "next-auth";
-import { authOptions } from "../../../../../lib/auth";
+import { badRequest, jsonError, notFound, readJsonObject, serverError, unauthorized } from "../../../../../lib/api";
+import { requireAdmin } from "../../../../../lib/authHelpers";
 import { connectToDatabase } from "../../../../../lib/mongodb";
 import User from "../../../../../models/User";
 import Vehicle from "../../../../../models/Vehicle";
-
-function canPopulateAssignedVehicle() {
-    return Boolean(User.schema.path("assignedVehicle"));
-}
+import SupplyLog from "../../../../../models/SupplyLog";
 
 // PATCH — update driver details / status / default vehicle
 export async function PATCH(
     req: NextRequest,
     { params }: { params: Promise<{ id: string }> }
 ) {
-    const session = await getServerSession(authOptions);
-    if (!session || session.user.role !== "admin") {
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const admin = await requireAdmin();
+    if (!admin) return unauthorized();
 
     const { id } = await params;
-    if (!Types.ObjectId.isValid(id)) {
-        return NextResponse.json({ error: "Invalid driver id." }, { status: 400 });
-    }
+    if (!Types.ObjectId.isValid(id)) return badRequest("Invalid driver id.");
 
-    const body = await req.json() as {
-        name?: string;
-        username?: string;
-        phone?: string;
-        isActive?: boolean;
-        assignedVehicleId?: string | null;
-    };
+    const body = await readJsonObject(req);
+    if (!body) return badRequest("Invalid request body.");
 
-    await connectToDatabase();
     const updates: {
         name?: string;
         username?: string;
@@ -44,33 +31,19 @@ export async function PATCH(
 
     if (typeof body.name === "string") {
         const name = body.name.trim();
-        if (!name) {
-            return NextResponse.json({ error: "Name cannot be empty." }, { status: 400 });
-        }
+        if (!name) return badRequest("Name cannot be empty.");
         updates.name = name;
     }
 
+    let username: string | undefined;
     if (typeof body.username === "string") {
-        const username = body.username.trim();
-        if (!username) {
-            return NextResponse.json({ error: "Username cannot be empty." }, { status: 400 });
-        }
-        const existing = await User.findOne({
-            username,
-            _id: { $ne: id },
-            role: "driver",
-        }).lean();
-        if (existing) {
-            return NextResponse.json({ error: "Username already taken." }, { status: 409 });
-        }
-        updates.username = username;
+        username = body.username.trim();
+        if (!username) return badRequest("Username cannot be empty.");
     }
 
     if (typeof body.phone === "string") {
         const phone = body.phone.trim();
-        if (!phone) {
-            return NextResponse.json({ error: "Phone cannot be empty." }, { status: 400 });
-        }
+        if (!phone) return badRequest("Phone cannot be empty.");
         updates.phone = phone;
     }
 
@@ -78,62 +51,86 @@ export async function PATCH(
         updates.isActive = body.isActive;
     }
 
+    let assignedVehicleId: string | undefined;
     if (body.assignedVehicleId !== undefined) {
-        const assignedVehicleId = body.assignedVehicleId?.trim() ?? "";
+        if (body.assignedVehicleId !== null && typeof body.assignedVehicleId !== "string") {
+            return badRequest("Invalid assigned vehicle.");
+        }
+        assignedVehicleId = body.assignedVehicleId?.trim() ?? "";
         if (!assignedVehicleId) {
             updates.assignedVehicle = null;
-        } else {
-            if (!Types.ObjectId.isValid(assignedVehicleId)) {
-                return NextResponse.json({ error: "Invalid assigned vehicle." }, { status: 400 });
-            }
-            const vehicle = await Vehicle.findById(assignedVehicleId).lean();
-            if (!vehicle || !vehicle.isActive) {
-                return NextResponse.json({ error: "Assigned vehicle is not available." }, { status: 400 });
-            }
-            updates.assignedVehicle = assignedVehicleId;
+        } else if (!Types.ObjectId.isValid(assignedVehicleId)) {
+            return badRequest("Invalid assigned vehicle.");
         }
     }
 
-    if (Object.keys(updates).length === 0) {
-        return NextResponse.json({ error: "No valid fields to update." }, { status: 400 });
-    }
+    try {
+        await connectToDatabase();
 
-    const driverQuery = User.findByIdAndUpdate(
-        id,
-        updates,
-        { new: true }
-    ).select("-password");
-    if (canPopulateAssignedVehicle()) {
-        driverQuery.populate("assignedVehicle", "name vehicleNumber capacity isActive");
-    }
-    const driver = await driverQuery.lean();
+        if (username !== undefined) {
+            const existing = await User.exists({
+                username,
+                _id: { $ne: id },
+                role: "driver",
+            });
+            if (existing) return jsonError("Username already taken.", 409);
+            updates.username = username;
+        }
 
-    if (!driver) {
-        return NextResponse.json({ error: "Driver not found" }, { status: 404 });
-    }
+        if (assignedVehicleId) {
+            const vehicle = await Vehicle.exists({ _id: assignedVehicleId, isActive: true });
+            if (!vehicle) return badRequest("Assigned vehicle is not available.");
+            updates.assignedVehicle = assignedVehicleId;
+        }
 
-    return NextResponse.json(driver);
+        if (Object.keys(updates).length === 0) {
+            return badRequest("No valid fields to update.");
+        }
+
+        const driver = await User.findByIdAndUpdate(
+            id,
+            updates,
+            { returnDocument: "after" }
+        )
+            .select("-password")
+            .populate("assignedVehicle", "name vehicleNumber capacity isActive")
+            .lean();
+
+        if (!driver) return notFound("Driver not found");
+
+        return NextResponse.json(driver);
+    } catch (err: unknown) {
+        if (err && typeof err === "object" && "code" in err && (err as { code: number }).code === 11000) {
+            return jsonError("Username already taken.", 409);
+        }
+        return serverError(err);
+    }
 }
 
 export async function DELETE(
     _req: NextRequest,
     { params }: { params: Promise<{ id: string }> }
 ) {
-    const session = await getServerSession(authOptions);
-    if (!session || session.user.role !== "admin") {
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const admin = await requireAdmin();
+    if (!admin) return unauthorized();
 
     const { id } = await params;
-    if (!Types.ObjectId.isValid(id)) {
-        return NextResponse.json({ error: "Invalid driver id." }, { status: 400 });
-    }
+    if (!Types.ObjectId.isValid(id)) return badRequest("Invalid driver id.");
 
-    await connectToDatabase();
-    const deleted = await User.findOneAndDelete({ _id: id, role: "driver" }).lean();
-    if (!deleted) {
-        return NextResponse.json({ error: "Driver not found." }, { status: 404 });
-    }
+    try {
+        await connectToDatabase();
 
-    return NextResponse.json({ success: true });
+        // The ledger keeps its driver attribution: a driver with history is
+        // deactivated (PATCH isActive:false), never hard-deleted.
+        if (await SupplyLog.exists({ driver: id })) {
+            return jsonError("This driver has delivery records. Deactivate the driver instead.", 409);
+        }
+
+        const deleted = await User.findOneAndDelete({ _id: id, role: "driver" }).select("_id").lean();
+        if (!deleted) return notFound("Driver not found.");
+
+        return NextResponse.json({ success: true });
+    } catch (err) {
+        return serverError(err);
+    }
 }

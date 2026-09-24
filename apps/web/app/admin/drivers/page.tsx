@@ -1,23 +1,9 @@
 "use client";
 
-import { useState, FormEvent } from "react";
-import { useAdminDrivers, useAdminQueryClient, useAdminVehicles } from "../../hooks/useAdminQueries";
-
-interface Driver {
-  _id: string;
-  name: string;
-  username: string;
-  phone?: string;
-  isActive: boolean;
-  createdAt: string;
-  assignedVehicle?: {
-    _id: string;
-    name: string;
-    vehicleNumber: string;
-    capacity: string;
-    isActive: boolean;
-  } | null;
-}
+import { useCallback, useState, FormEvent } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useAdminDrivers, useAdminVehicles, type Driver } from "../../hooks/useAdminQueries";
+import { useEscapeKey } from "../../hooks/useEscapeKey";
 
 export default function DriversPage() {
     const [showForm, setShowForm] = useState(false);
@@ -39,10 +25,22 @@ export default function DriversPage() {
     const [selectedDriver, setSelectedDriver] = useState<Driver | null>(null);
     const [confirmDeleteDriver, setConfirmDeleteDriver] = useState<Driver | null>(null);
     const [deletingDriver, setDeletingDriver] = useState(false);
+    // Errors from Activate/Deactivate and Delete, which run from the details
+    // dialog while the Add form (and its own error) is closed.
+    const [actionError, setActionError] = useState("");
 
     const { data: drivers, isLoading: isDriversLoading } = useAdminDrivers();
     const { data: vehicles } = useAdminVehicles();
-    const queryClient = useAdminQueryClient();
+    const queryClient = useQueryClient();
+
+    const closeDetails = useCallback(() => setSelectedDriver(null), []);
+    const closeConfirmDelete = useCallback(() => setConfirmDeleteDriver(null), []);
+    const closeEdit = useCallback(() => setEditingDriver(null), []);
+    // The delete prompt opens above the details dialog, so Escape closes only
+    // the prompt while it is showing.
+    useEscapeKey(closeDetails, Boolean(selectedDriver) && !confirmDeleteDriver);
+    useEscapeKey(closeConfirmDelete, Boolean(confirmDeleteDriver));
+    useEscapeKey(closeEdit, Boolean(editingDriver));
 
     function maskName(name: string) {
         return name.length > 12 ? `${name.slice(0, 12)}...` : name;
@@ -86,6 +84,7 @@ export default function DriversPage() {
 
     async function toggleActive(driver: Driver): Promise<boolean> {
         setTogglingId(driver._id);
+        setActionError("");
         try {
             const res = await fetch(`/api/admin/drivers/${driver._id}`, {
                 method: "PATCH",
@@ -94,13 +93,13 @@ export default function DriversPage() {
             });
             if (!res.ok) {
                 const data = await safeParseJson(res);
-                setFormError(data.error ?? "Failed to update driver status.");
+                setActionError(data.error ?? "Failed to update driver status.");
                 return false;
             }
             await queryClient.invalidateQueries({ queryKey: ["admin", "drivers"] });
             return true;
         } catch {
-            setFormError("Failed to update driver status. Please try again.");
+            setActionError("Failed to update driver status. Please try again.");
             return false;
         } finally {
             setTogglingId(null);
@@ -152,12 +151,13 @@ export default function DriversPage() {
         const driver = confirmDeleteDriver;
         setConfirmDeleteDriver(null);
         setDeletingDriver(true);
+        setActionError("");
         try {
             const res = await fetch(`/api/admin/drivers/${driver._id}`, { method: "DELETE" });
             const data = await safeParseJson(res);
             setDeletingDriver(false);
             if (!res.ok) {
-                setFormError(data.error ?? "Failed to delete driver");
+                setActionError(data.error ?? "Failed to delete driver");
                 return;
             }
             await queryClient.invalidateQueries({ queryKey: ["admin", "drivers"] });
@@ -165,7 +165,7 @@ export default function DriversPage() {
             if (editingDriver?._id === driver._id) setEditingDriver(null);
         } catch {
             setDeletingDriver(false);
-            setFormError("Failed to delete driver. Please try again.");
+            setActionError("Failed to delete driver. Please try again.");
         }
     }
 
@@ -239,6 +239,8 @@ export default function DriversPage() {
                     </form>
                 </div>
             )}
+
+            {actionError && <div className="alert alert-error" style={{ marginBottom: "1rem" }}>{actionError}</div>}
 
             {/* Table */}
             {isDriversLoading ? (
@@ -355,11 +357,14 @@ export default function DriversPage() {
                 >
                     <div
                         className="card"
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="driver-details-title"
                         style={{ width: "100%", maxWidth: "560px" }}
                         onClick={(e) => e.stopPropagation()}
                     >
                         <div className="flex items-center justify-between" style={{ marginBottom: "1rem" }}>
-                            <h3>Driver Details</h3>
+                            <h3 id="driver-details-title">Driver Details</h3>
                             <button type="button" className="btn btn-sm btn-secondary" onClick={() => setSelectedDriver(null)}>
                                 Close
                             </button>
@@ -393,6 +398,8 @@ export default function DriversPage() {
                             </div>
                             <div><strong>Joined:</strong> {selectedDriver.createdAt ? new Date(selectedDriver.createdAt).toLocaleDateString("en-IN") : "-"}</div>
                         </div>
+
+                        {actionError && <div className="alert alert-error" style={{ marginBottom: "1rem" }}>{actionError}</div>}
 
                         <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
                             <button
@@ -434,8 +441,8 @@ export default function DriversPage() {
                     style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem", zIndex: 400 }}
                     onClick={() => setConfirmDeleteDriver(null)}
                 >
-                    <div className="card" style={{ width: "100%", maxWidth: "400px" }} onClick={(e) => e.stopPropagation()}>
-                        <h3 style={{ marginBottom: "0.75rem" }}>Delete Driver?</h3>
+                    <div className="card" role="dialog" aria-modal="true" aria-labelledby="delete-driver-title" style={{ width: "100%", maxWidth: "400px" }} onClick={(e) => e.stopPropagation()}>
+                        <h3 id="delete-driver-title" style={{ marginBottom: "0.75rem" }}>Delete Driver?</h3>
                         <p style={{ color: "var(--text-secondary)", marginBottom: "1.25rem" }}>
                             Permanently delete driver <strong>{confirmDeleteDriver.name}</strong> (@{confirmDeleteDriver.username})? This cannot be undone.
                         </p>
@@ -465,11 +472,14 @@ export default function DriversPage() {
                 >
                     <div
                         className="card"
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="edit-driver-title"
                         style={{ width: "100%", maxWidth: "560px" }}
                         onClick={(e) => e.stopPropagation()}
                     >
                         <div className="flex items-center justify-between" style={{ marginBottom: "1rem" }}>
-                            <h3>Edit Driver</h3>
+                            <h3 id="edit-driver-title">Edit Driver</h3>
                             <button type="button" className="btn btn-sm btn-secondary" onClick={() => setEditingDriver(null)}>
                                 Close
                             </button>

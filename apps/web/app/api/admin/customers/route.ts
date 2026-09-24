@@ -1,15 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Types } from "mongoose";
-import { getServerSession } from "next-auth";
-import { authOptions } from "../../../../lib/auth";
+import { badRequest, jsonError, optionalNumber, readJsonObject, requiredString, serverError, unauthorized } from "../../../../lib/api";
+import { requireAdmin } from "../../../../lib/authHelpers";
+import { createOrRestoreCustomer } from "../../../../lib/customers";
 import { connectToDatabase } from "../../../../lib/mongodb";
 import Customer from "../../../../models/Customer";
 
 export async function GET(req: NextRequest) {
-  const session = await getServerSession(authOptions);
-  if (!session || session.user.role !== "admin") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const admin = await requireAdmin();
+  if (!admin) return unauthorized();
 
   const search = req.nextUrl.searchParams.get("search")?.trim() ?? "";
   const area = req.nextUrl.searchParams.get("area")?.trim() ?? "";
@@ -24,93 +22,92 @@ export async function GET(req: NextRequest) {
   }
   if (area) baseQuery.area = area;
 
-  await connectToDatabase();
+  try {
+    await connectToDatabase();
 
-  if (!pageParam && !limitParam) {
-    // No pagination params — trimmed array for dropdowns
-    const customers = await Customer.find(baseQuery)
-      .select("name phone area isActive locationType subscriptionCans cashPerCan")
-      .sort({ isActive: -1, name: 1 })
-      .lean();
-    return NextResponse.json(customers);
-  }
+    if (!pageParam && !limitParam) {
+      // No pagination params — trimmed array for dropdowns
+      const customers = await Customer.find(baseQuery)
+        .select("name phone area isActive locationType subscriptionCans cashPerCan")
+        .sort({ isActive: -1, name: 1 })
+        .lean();
+      return NextResponse.json(customers);
+    }
 
-  const page = Math.max(1, Number.parseInt(pageParam ?? "1", 10) || 1);
-  const limit = Math.max(1, Math.min(100, Number.parseInt(limitParam ?? "30", 10) || 30));
-  const skip = (page - 1) * limit;
+    const page = Math.max(1, Number.parseInt(pageParam ?? "1", 10) || 1);
+    const limit = Math.max(1, Math.min(100, Number.parseInt(limitParam ?? "30", 10) || 30));
+    const skip = (page - 1) * limit;
 
-  const [customers, aggResult, areas] = await Promise.all([
-    Customer.find(baseQuery).sort({ isActive: -1, name: 1 }).skip(skip).limit(limit).lean(),
-    Customer.aggregate([
-      { $match: baseQuery },
-      {
-        $group: {
-          _id: "$isActive",
-          count: { $sum: 1 },
+    const [customers, aggResult, areas] = await Promise.all([
+      Customer.find(baseQuery).sort({ isActive: -1, name: 1 }).skip(skip).limit(limit).lean(),
+      Customer.aggregate([
+        { $match: baseQuery },
+        {
+          $group: {
+            _id: "$isActive",
+            count: { $sum: 1 },
+          },
         },
-      },
-    ]),
-    Customer.distinct("area", { isDeleted: { $ne: true } }),
-  ]);
+      ]),
+      Customer.distinct("area", { isDeleted: { $ne: true } }),
+    ]);
 
-  const activeCount = (aggResult.find((r: { _id: boolean; count: number }) => r._id === true)?.count ?? 0) as number;
-  const inactiveCount = (aggResult.find((r: { _id: boolean; count: number }) => r._id === false)?.count ?? 0) as number;
-  const total = activeCount + inactiveCount;
-  const totalPages = Math.max(1, Math.ceil(total / limit));
-  const sortedAreas = (areas as string[]).filter(Boolean).sort();
+    const activeCount = (aggResult.find((r: { _id: boolean; count: number }) => r._id === true)?.count ?? 0) as number;
+    const inactiveCount = (aggResult.find((r: { _id: boolean; count: number }) => r._id === false)?.count ?? 0) as number;
+    const total = activeCount + inactiveCount;
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+    const sortedAreas = (areas as string[]).filter(Boolean).sort();
 
-  return NextResponse.json({ customers, total, activeCount, inactiveCount, page, limit, totalPages, areas: sortedAreas });
+    return NextResponse.json({ customers, total, activeCount, inactiveCount, page, limit, totalPages, areas: sortedAreas });
+  } catch (err) {
+    return serverError(err);
+  }
 }
 
 export async function POST(req: NextRequest) {
-  const session = await getServerSession(authOptions);
-  if (!session || session.user.role !== "admin") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const admin = await requireAdmin();
+  if (!admin) return unauthorized();
 
-  const body = (await req.json()) as {
-    name?: string;
-    phone?: string;
-    email?: string;
-    address?: string;
-    area?: string;
-    locationType?: "home" | "office" | "both";
-    subscriptionCans?: number | string;
-    cashPerCan?: number | string;
-    securityDeposit?: number | string;
-    registeredDate?: string;
-  };
+  const body = await readJsonObject(req);
+  if (!body) return badRequest("Invalid request body.");
 
-  const name = body.name?.trim();
-  const phone = body.phone?.trim();
-  const email = body.email?.trim() || undefined;
-  const address = body.address?.trim();
-  const area = body.area?.trim() || undefined;
-  const locationType = body.locationType;
-  const subscriptionCans = Number(body.subscriptionCans ?? 1);
-  const cashPerCan = body.cashPerCan !== undefined && body.cashPerCan !== "" ? Number(body.cashPerCan) : undefined;
-  const securityDeposit = body.securityDeposit !== undefined && body.securityDeposit !== "" ? Number(body.securityDeposit) : undefined;
-  const registeredDate = body.registeredDate ? new Date(body.registeredDate) : new Date();
+  const name = requiredString(body.name, 200);
+  const phone = requiredString(body.phone, 30);
+  const email = requiredString(body.email, 200);
+  const address = requiredString(body.address, 1000);
+  const area = requiredString(body.area, 200);
+  const locationType = body.locationType === "home" || body.locationType === "office" || body.locationType === "both"
+    ? body.locationType
+    : undefined;
+  const subscriptionCans = body.subscriptionCans === undefined ? 1 : optionalNumber(body.subscriptionCans);
+  const cashPerCan = optionalNumber(body.cashPerCan);
+  const securityDeposit = optionalNumber(body.securityDeposit);
+  const registeredDate = body.registeredDate
+    ? new Date(typeof body.registeredDate === "string" ? body.registeredDate : NaN)
+    : new Date();
 
-  if (!name) return NextResponse.json({ error: "Name is required." }, { status: 400 });
-  if (!phone) return NextResponse.json({ error: "Phone is required." }, { status: 400 });
-  if (!address) return NextResponse.json({ error: "Location is required." }, { status: 400 });
-  if (!Number.isInteger(subscriptionCans) || subscriptionCans < 1) {
-    return NextResponse.json({ error: "Subscription cans must be a positive integer." }, { status: 400 });
+  if (!name) return badRequest("Name is required.");
+  if (!phone) return badRequest("Phone is required.");
+  if (!address) return badRequest("Location is required.");
+  if (subscriptionCans === undefined || !Number.isInteger(subscriptionCans) || subscriptionCans < 1) {
+    return badRequest("Subscription cans must be a positive integer.");
   }
-  if (cashPerCan !== undefined && (isNaN(cashPerCan) || cashPerCan < 0)) {
-    return NextResponse.json({ error: "Cash per can must be a non-negative number." }, { status: 400 });
+  const hasCashPerCan = body.cashPerCan !== undefined && body.cashPerCan !== null && body.cashPerCan !== "";
+  if (hasCashPerCan && (cashPerCan === undefined || cashPerCan < 0)) {
+    return badRequest("Cash per can must be a non-negative number.");
   }
-  if (securityDeposit !== undefined && (isNaN(securityDeposit) || securityDeposit < 0)) {
-    return NextResponse.json({ error: "Security deposit must be a non-negative number." }, { status: 400 });
+  const hasSecurityDeposit = body.securityDeposit !== undefined && body.securityDeposit !== null && body.securityDeposit !== "";
+  if (hasSecurityDeposit && (securityDeposit === undefined || securityDeposit < 0)) {
+    return badRequest("Security deposit must be a non-negative number.");
   }
-  if (locationType && locationType !== "home" && locationType !== "office" && locationType !== "both") {
-    return NextResponse.json({ error: "Location type must be home, office, or both." }, { status: 400 });
+  if (body.locationType && locationType === undefined) {
+    return badRequest("Location type must be home, office, or both.");
   }
+  if (Number.isNaN(registeredDate.getTime())) return badRequest("Invalid date.");
 
-  await connectToDatabase();
   try {
-    const customer = await Customer.create({
+    await connectToDatabase();
+    const result = await createOrRestoreCustomer({
       name,
       phone,
       email,
@@ -121,13 +118,13 @@ export async function POST(req: NextRequest) {
       cashPerCan,
       securityDeposit,
       registeredDate,
-      ...(Types.ObjectId.isValid(session.user.id) ? { createdBy: session.user.id } : {}),
+      createdBy: admin.id,
     });
-    return NextResponse.json(customer, { status: 201 });
-  } catch (err: unknown) {
-    if (err && typeof err === "object" && "code" in err && (err as { code: number }).code === 11000) {
-      return NextResponse.json({ error: "A customer with this phone number already exists." }, { status: 409 });
+    if ("duplicate" in result) {
+      return jsonError("A customer with this phone number already exists.", 409);
     }
-    throw err;
+    return NextResponse.json(result.customer, { status: 201 });
+  } catch (err) {
+    return serverError(err);
   }
 }

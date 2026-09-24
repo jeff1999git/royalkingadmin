@@ -1,24 +1,37 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/create-next-app).
+# Royal King Water Supply — web app
 
-## Getting Started
+Next.js 16 (App Router) with React 19, TypeScript, Mongoose, next-auth (credentials, JWT sessions) and TanStack Query. Styling is plain CSS in `app/globals.css` plus inline styles. There is no test suite; `npm run check-types` and `npm run lint` are the static checks.
 
-First, run the development server:
+## Running it
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install            # from the repo root
+test -f .env || cp .env.example .env   # only on a fresh checkout; never overwrite a real .env
+npm run dev            # http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+`npm run build` then `npm run start` serves the production build, which is also how the PWA and service worker can be tested locally.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Layout
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load Inter, a custom Google Font.
+| Path | What lives there |
+|---|---|
+| `app/admin/*` | Admin portal: analytics (`amounts`), deliveries (`supplies`), customers, drivers, vehicles. `/admin` redirects to `/admin/amounts`. |
+| `app/driver/*` | Driver portal: delivery, cash and customer-registration forms, recent entries, odometer and stock dialogs. |
+| `app/api/admin/*`, `app/api/driver/*`, `app/api/stock` | JSON API. Every route checks the session with `requireAdmin()` / `requireDriver()` from `lib/authHelpers.ts` and answers failures as `{ error }` using the helpers in `lib/api.ts`. |
+| `app/components/*` | Shared UI: `StockModal`, `PaymentPill`, `ProductPill`, PWA registration and install prompt. |
+| `app/hooks/*` | React Query hooks and client types for the admin pages (`useAdminQueries.ts`), `useEscapeKey`. |
+| `lib/*` | Shared logic: `supplyProduct.ts` (can/case rules and pricing), `format.ts` (IST date and money formatting for the UI), `istTime.ts` (IST day boundaries for queries), `customers.ts` (create-or-restore), `auth.ts`, `cloudinary.ts`, `csv.ts`, `googleDrive.ts`. |
+| `models/*` | Mongoose models: `SupplyLog` (the ledger), `Customer`, `User` (drivers), `Vehicle`, `Stock`. |
+| `proxy.ts` | next-auth middleware: sends signed-in users to their portal and keeps `/admin` and `/driver` role-gated. |
+
+## Data rules worth knowing
+
+- **Business days are IST.** The server computes day boundaries with `lib/istTime.ts` and the UI formats every date in IST with `lib/format.ts`, whatever timezone the device is in.
+- **Older ledger rows lack newer fields.** A water row without `productType` is a can; rows without `paymentStatus` count as cash. Queries filter with `$ne` / `$nin` and reads default, so old documents keep working. Never change that with a migration.
+- **Amounts.** A driver's can delivery is priced from the customer's `cashPerCan`; a case delivery from the price per case the driver enters. The admin can type an amount when adding or editing a delivery; editing only a remark or payment status never changes a saved amount.
+- **Deactivated drivers** lose API access within a minute even though their session token is still valid: `lib/auth.ts` re-checks `isActive` in the JWT callback.
+- **Deleting** a driver or vehicle that has ledger rows is refused (deactivate or disable it instead). Deleting a customer is a soft delete; registering the same phone again restores it.
 
 ## Installable app (PWA)
 
@@ -40,7 +53,7 @@ The app can be installed to a phone or desktop home screen. It then opens full-s
 
 **Changing the service worker, offline page or icons.** Bump `VERSION` at the top of `public/sw.js`. Open apps then show "A new version of the app is ready" and switch over when the user taps Reload. They never reload by themselves, so a half-filled form is not lost.
 
-**Regenerating icons.** Edit the artwork in `scripts/generate-pwa-icons.mjs`, run `npm run icons`, commit the output files, and bump `VERSION` in `public/sw.js`. The script uses `sharp`, which is already installed through Next.js.
+**Regenerating icons.** Edit the artwork in `scripts/generate-pwa-icons.mjs`, run `npm run icons`, commit the output files, and bump `VERSION` in `public/sw.js`. The script needs `sharp` (pulled in by Next.js; run `npm install` first).
 
 **Proxy.** `proxy.ts` must keep `/sw.js`, `/manifest.webmanifest`, `/offline.html` and `/icons/*` out of its matcher. They have to load without a session.
 
@@ -65,17 +78,3 @@ Both contain every entry matching the current filters, the same rows the summary
 
 Until the client ID is set, the button explains that Drive saving isn't set up yet. Download Sheet works without any setup.
 
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.

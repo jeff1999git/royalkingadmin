@@ -13,14 +13,19 @@ export type AnalyticsRange = {
 
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
+// A custom from/to window is capped at two years so one mistyped year cannot
+// enumerate thousands of day buckets and scan the whole ledger.
+const MAX_SPAN_MS = 731 * 24 * 60 * 60 * 1000;
+
 // Resolves the analytics date window from the query string:
 //   ?from=YYYY-MM-DD&to=YYYY-MM-DD  inclusive IST days, or otherwise
 //   ?days=N                          last N IST days ending today (7-90, default 30).
 // Shared by the analytics charts and the new-customers list so the
 // "New Customers" number and the list behind it always agree.
-// Returns null when a date can't be parsed (e.g. month 13). Like the rest of
-// the app's date handling, an overflowing day such as 2026-02-30 rolls over
-// into the next month rather than being rejected.
+// Returns null when a date can't be parsed (e.g. month 13) or when a custom
+// window spans more than two years. Like the rest of the app's date handling,
+// an overflowing day such as 2026-02-30 rolls over into the next month rather
+// than being rejected.
 export function resolveAnalyticsRange(params: URLSearchParams): AnalyticsRange | null {
   const fromParam = params.get("from");
   const toParam = params.get("to");
@@ -41,6 +46,7 @@ export function resolveAnalyticsRange(params: URLSearchParams): AnalyticsRange |
   const startDay = istDateRange(fromDay);
   const endDay = istDateRange(toDay);
   if (!startDay || !endDay) return null;
+  if (endDay.end.getTime() - startDay.start.getTime() > MAX_SPAN_MS) return null;
   return { fromDay, toDay, start: startDay.start, end: endDay.end };
 }
 

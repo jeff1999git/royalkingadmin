@@ -4,31 +4,20 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
+  locationTypeLabel,
   useAdminCustomerDetail,
   useAdminCustomerHistory,
 } from "../../../hooks/useAdminQueries";
 import { casesBySizeText, deliveredQuantity } from "../../../../lib/supplyProduct";
+import { formatDateTime, formatMoney, istToday } from "../../../../lib/format";
+import PaymentPill from "../../../components/PaymentPill";
 import ProductPill from "../../../components/ProductPill";
-
-const locationTypeLabel = (lt?: string) =>
-  lt === "home" ? "Home" : lt === "office" ? "Office" : lt === "both" ? "Both" : undefined;
-
-function paymentLabel(ps?: string) {
-  return !ps || ps === "cash" ? "Cash" : ps === "upi" ? "UPI" : "Not Paid";
-}
-
-function paymentColors(ps?: string) {
-  if (!ps || ps === "cash") return { background: "#e8f5e9", color: "#2e7d32" };
-  if (ps === "upi") return { background: "#e3f2fd", color: "#1565c0" };
-  return { background: "#fff3e0", color: "#e65100" };
-}
 
 export default function CustomerHistoryPage() {
   const params = useParams<{ id: string }>();
   const customerId = params?.id ?? "";
 
-  const now = new Date();
-  const maxMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const maxMonth = istToday().slice(0, 7);
 
   const [filters, setFilters] = useState({ month: "", paymentStatus: "" });
   const [page, setPage] = useState(1);
@@ -42,7 +31,13 @@ export default function CustomerHistoryPage() {
     data: customer,
     isLoading: customerLoading,
     isError: customerError,
+    error: customerFetchError,
+    isFetching: customerFetching,
+    refetch: refetchCustomer,
   } = useAdminCustomerDetail(customerId);
+  // Only a 404 means the customer doesn't exist; anything else is a failed load.
+  const customerNotFound =
+    customerError && (customerFetchError as (Error & { status?: number }) | null)?.status === 404;
 
   const {
     data: historyData,
@@ -66,7 +61,7 @@ export default function CustomerHistoryPage() {
     return d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
   }, [customer?.registeredDate, customer?.createdAt]);
 
-  if (customerError) {
+  if (customerNotFound) {
     return (
       <div>
         <div className="card empty-state" style={{ marginBottom: "1rem" }}>
@@ -95,6 +90,13 @@ export default function CustomerHistoryPage() {
       <div className="card" style={{ marginBottom: "1rem" }}>
         {customerLoading ? (
           <p style={{ color: "var(--text-muted)" }}>Loading customer...</p>
+        ) : customerError ? (
+          <>
+            <div className="alert alert-error" style={{ marginBottom: "0.75rem" }}>Failed to load customer.</div>
+            <button type="button" className="btn btn-secondary btn-sm" disabled={customerFetching} onClick={() => void refetchCustomer()}>
+              {customerFetching ? "Retrying..." : "Try again"}
+            </button>
+          </>
         ) : customer ? (
           <div
             style={{
@@ -134,13 +136,13 @@ export default function CustomerHistoryPage() {
             {customer.cashPerCan !== undefined && (
               <div>
                 <div className="text-sm text-muted">Cash Per Can</div>
-                <div style={{ fontWeight: 600 }}>₹{customer.cashPerCan}</div>
+                <div style={{ fontWeight: 600 }}>{formatMoney(customer.cashPerCan)}</div>
               </div>
             )}
             {customer.securityDeposit !== undefined && (
               <div>
                 <div className="text-sm text-muted">Security Deposit</div>
-                <div style={{ fontWeight: 600 }}>₹{customer.securityDeposit}</div>
+                <div style={{ fontWeight: 600 }}>{formatMoney(customer.securityDeposit)}</div>
               </div>
             )}
             <div>
@@ -148,10 +150,10 @@ export default function CustomerHistoryPage() {
               <div
                 style={{
                   fontWeight: 600,
-                  color: customer.isActive ? "var(--accent-primary)" : "var(--text-muted)",
+                  color: customer.isDeleted ? "var(--danger)" : customer.isActive ? "var(--accent-primary)" : "var(--text-muted)",
                 }}
               >
-                {customer.isActive ? "Active" : "Inactive"}
+                {customer.isDeleted ? "Deleted" : customer.isActive ? "Active" : "Inactive"}
               </div>
             </div>
             <div>
@@ -225,7 +227,7 @@ export default function CustomerHistoryPage() {
         </span>
         <span><strong style={{ color: "var(--text-primary)" }}>Taken Back:</strong> {stats?.totalCansTakenBack ?? 0}</span>
         <span style={{ fontSize: "1.05rem", fontWeight: 800, color: "var(--text-primary)" }}>
-          Total Amount: {(stats?.totalAmount ?? 0).toLocaleString("en-IN")}
+          Total Amount: {formatMoney(stats?.totalAmount)}
         </span>
         {!hasAnyFilter && <span style={{ marginLeft: "auto" }}>All time</span>}
       </div>
@@ -263,26 +265,14 @@ export default function CustomerHistoryPage() {
               {logs.map((log, index) => (
                 <tr key={log._id}>
                   <td>{serialStart + index + 1}</td>
-                  <td>{log.formattedSuppliedAt}</td>
+                  <td>{formatDateTime(log.suppliedAt)}</td>
                   <td style={{ fontWeight: 700 }}>
                     {deliveredQuantity(log) ?? "-"}
                     <div style={{ marginTop: "0.15rem" }}><ProductPill productType={log.productType} caseSize={log.caseSize} size="sm" /></div>
                   </td>
                   <td>{log.cansTakenBack ?? "-"}</td>
-                  <td>{log.amount !== undefined ? `₹${log.amount.toLocaleString("en-IN")}` : "-"}</td>
-                  <td>
-                    <span
-                      style={{
-                        fontSize: "0.75rem",
-                        fontWeight: 600,
-                        padding: "0.15rem 0.5rem",
-                        borderRadius: "20px",
-                        ...paymentColors(log.paymentStatus),
-                      }}
-                    >
-                      {paymentLabel(log.paymentStatus)}
-                    </span>
-                  </td>
+                  <td>{log.amount !== undefined ? formatMoney(log.amount) : "-"}</td>
+                  <td><PaymentPill status={log.paymentStatus} size="sm" /></td>
                   <td>{log.driver?.name ?? "-"}</td>
                 </tr>
               ))}

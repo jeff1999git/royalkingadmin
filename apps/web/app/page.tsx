@@ -1,26 +1,11 @@
 "use client";
 
-import { useSession } from "next-auth/react";
-import { useEffect, Suspense } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
 import InstallPrompt from "./components/InstallPrompt";
 
+// Anyone who is signed in is redirected by proxy.ts before this page renders,
+// so it needs no session check and paints immediately.
 function HomeContent() {
-  const { data: session, status } = useSession();
-  const router = useRouter();
-
-  // Auto-redirect if already logged in
-  useEffect(() => {
-    if (status === "authenticated" && session?.user) {
-      if (session.user.role === "admin") {
-        router.replace("/admin/amounts");
-      } else if (session.user.role === "driver") {
-        router.replace("/driver");
-      }
-    }
-  }, [session, status, router]);
-
   return (
     <div style={{
       height: "100vh", // Force absolute device height
@@ -47,12 +32,7 @@ function HomeContent() {
 
         {/* Buttons layout */}
         <div style={{ width: "100%", maxWidth: "340px", display: "flex", flexDirection: "column", gap: "1rem" }}>
-          {status === "loading" ? (
-            <div style={{ color: "var(--text-secondary)", fontSize: "0.95rem", fontWeight: 500, textAlign: "center", padding: "1rem" }}>Checking session…</div>
-          ) : status === "authenticated" ? (
-            <div style={{ color: "var(--text-secondary)", fontSize: "0.95rem", fontWeight: 500, textAlign: "center", padding: "1rem" }}>Redirecting…</div>
-          ) : (
-            <>
+          <>
               {/* Admin Row Card */}
               <Link href="/login?role=admin" style={{ display: "block", width: "100%" }}>
                 <div className="card" style={{
@@ -114,23 +94,13 @@ function HomeContent() {
               </Link>
 
               <InstallPrompt />
-            </>
-          )}
+          </>
         </div>
       </div>
     </div>
   );
 }
 
-// Wrap HomePage in a Suspense boundary to prevent Next.js client-side routing exceptions on browser back
 export default function HomePage() {
-  return (
-    <Suspense fallback={
-      <div style={{ height: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "var(--bg-secondary)" }}>
-        <p style={{ color: "var(--text-secondary)", fontWeight: 500 }}>Loading...</p>
-      </div>
-    }>
-      <HomeContent />
-    </Suspense>
-  );
+  return <HomeContent />;
 }

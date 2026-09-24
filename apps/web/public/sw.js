@@ -19,7 +19,7 @@
  * only switches to the new worker when the user taps Reload.
  */
 
-const VERSION = "v1";
+const VERSION = "v2";
 const STATIC_CACHE = `rk-static-${VERSION}`;
 const OFFLINE_URL = "/offline.html";
 const MAX_STATIC_ENTRIES = 200;
@@ -74,11 +74,15 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  if (url.pathname.startsWith("/_next/static/") || url.pathname.startsWith("/icons/")) {
+  if (
+    url.pathname.startsWith("/_next/static/") ||
+    url.pathname.startsWith("/icons/") ||
+    url.pathname === "/manifest.webmanifest"
+  ) {
     event.respondWith(cacheFirst(event));
   }
-  // Anything else (RSC payloads, /manifest.webmanifest, etc.) uses the
-  // browser's normal network handling.
+  // Anything else (RSC payloads etc.) uses the browser's normal network
+  // handling. The manifest is precached and only changes with VERSION.
 });
 
 // Pages: always from the network, never cached. Offline page on network failure.

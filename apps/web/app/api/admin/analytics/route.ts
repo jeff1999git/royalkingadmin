@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "../../../../lib/auth";
+import { badRequest, serverError, unauthorized } from "../../../../lib/api";
+import { requireAdmin } from "../../../../lib/authHelpers";
 import { newCustomerMatch, resolveAnalyticsRange } from "../../../../lib/analyticsRange";
 import { connectToDatabase } from "../../../../lib/mongodb";
 import { SUM_CASES } from "../../../../lib/supplyProduct";
@@ -9,21 +9,24 @@ import Customer from "../../../../models/Customer";
 import { Types } from "mongoose";
 
 export async function GET(req: NextRequest) {
-  const session = await getServerSession(authOptions);
-  if (!session || session.user.role !== "admin") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const admin = await requireAdmin();
+  if (!admin) return unauthorized();
 
   const sp = req.nextUrl.searchParams;
   const driverIdParam = sp.get("driverId");
   const vehicleIdParam = sp.get("vehicleId");
+  // A bad or stale id must not silently show company-wide numbers under a name.
+  if (driverIdParam && !Types.ObjectId.isValid(driverIdParam)) {
+    return badRequest("Invalid driver id.");
+  }
+  if (vehicleIdParam && !Types.ObjectId.isValid(vehicleIdParam)) {
+    return badRequest("Invalid vehicle id.");
+  }
 
   // Inclusive IST days. Shared with /api/admin/analytics/new-customers so the
   // "New Customers" total and the list behind it use the same window.
   const range = resolveAnalyticsRange(sp);
-  if (!range) {
-    return NextResponse.json({ error: "Invalid date range." }, { status: 400 });
-  }
+  if (!range) return badRequest("Invalid date range.");
   const { fromDay, toDay, start, end } = range;
 
   try {
@@ -44,10 +47,10 @@ export async function GET(req: NextRequest) {
     logType: "water",
     suppliedAt: { $gte: start, $lte: end },
   };
-  if (driverIdParam && Types.ObjectId.isValid(driverIdParam)) {
+  if (driverIdParam) {
     deliveryMatch.driver = new Types.ObjectId(driverIdParam);
   }
-  if (vehicleIdParam && Types.ObjectId.isValid(vehicleIdParam)) {
+  if (vehicleIdParam) {
     deliveryMatch.vehicle = new Types.ObjectId(vehicleIdParam);
   }
 
@@ -100,7 +103,6 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({ deliveries, registrations });
   } catch (err) {
-    console.error("[analytics GET]", err);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    return serverError(err);
   }
 }

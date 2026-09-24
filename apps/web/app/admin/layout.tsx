@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { signOut, useSession } from "next-auth/react";
+import { SessionProvider, signOut, useSession } from "next-auth/react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
+import StockModal from "../components/StockModal";
 
 const navItems = [
     {
@@ -41,94 +42,17 @@ const navItems = [
     },
 ];
 
-export default function AdminLayout({ children }: { children: ReactNode }) {
-    const pathname = usePathname();
-    const { data: session } = useSession();
-    const [profileOpen, setProfileOpen] = useState(false);
-    const profileRef = useRef<HTMLDivElement>(null);
+// A nav item is active on its own page and on any page under it, so
+// Customers stays highlighted on /admin/customers/<id>.
+function isActivePath(pathname: string, href: string) {
+    return pathname === href || pathname.startsWith(`${href}/`);
+}
 
-    // Stock modal state
-    const [stockOpen, setStockOpen] = useState(false);
-    const [stockLoading, setStockLoading] = useState(false);
-    const [stockSaving, setStockSaving] = useState(false);
-    const [stockError, setStockError] = useState("");
-    const [stockSuccess, setStockSuccess] = useState("");
-    const [stockValues, setStockValues] = useState({ cans: 0, dispensers: 0, stands: 0 });
-    const [stockUpdatedBy, setStockUpdatedBy] = useState<string | null>(null);
-    const [stockUpdatedAt, setStockUpdatedAt] = useState<string | null>(null);
-
-    async function openStockModal() {
-        setStockOpen(true);
-        setStockLoading(true);
-        setStockError("");
-        setStockSuccess("");
-        try {
-            const res = await fetch("/api/stock", { cache: "no-store" });
-            const data = (await res.json()) as { cans?: number; dispensers?: number; stands?: number; updatedBy?: string; updatedAt?: string };
-            setStockValues({ cans: data.cans ?? 0, dispensers: data.dispensers ?? 0, stands: data.stands ?? 0 });
-            setStockUpdatedBy(data.updatedBy ?? null);
-            setStockUpdatedAt(data.updatedAt ?? null);
-        } catch {
-            setStockError("Failed to load stock.");
-        } finally {
-            setStockLoading(false);
-        }
-    }
-
-    async function saveStock() {
-        setStockSaving(true);
-        setStockError("");
-        setStockSuccess("");
-        try {
-            const res = await fetch("/api/stock", {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(stockValues),
-            });
-            const data = (await res.json()) as { cans?: number; dispensers?: number; stands?: number; updatedBy?: string; updatedAt?: string; error?: string };
-            if (!res.ok) {
-                setStockError(data.error ?? "Failed to save stock.");
-            } else {
-                setStockValues({ cans: data.cans ?? 0, dispensers: data.dispensers ?? 0, stands: data.stands ?? 0 });
-                setStockUpdatedBy(data.updatedBy ?? null);
-                setStockUpdatedAt(data.updatedAt ?? null);
-                setStockSuccess("Stock updated.");
-                setTimeout(() => setStockSuccess(""), 2500);
-            }
-        } catch {
-            setStockError("Failed to save stock.");
-        } finally {
-            setStockSaving(false);
-        }
-    }
-
-    async function handleSignOut() {
-        await signOut({ callbackUrl: "/" });
-    }
-
-    // Close dropdown when clicking outside
-    useEffect(() => {
-        if (!profileOpen) return;
-        function onMouseDown(e: MouseEvent) {
-            if (profileRef.current && !profileRef.current.contains(e.target as Node)) {
-                setProfileOpen(false);
-            }
-        }
-        document.addEventListener("mousedown", onMouseDown);
-        return () => document.removeEventListener("mousedown", onMouseDown);
-    }, [profileOpen]);
-
-    // Close dropdown on route change
-    useEffect(() => {
-        setProfileOpen(false);
-    }, [pathname]);
-
-    const adminName = session?.user?.name ?? "Admin";
-
-    const NavLinks = ({ isBottomNav = false }: { isBottomNav?: boolean }) => (
+function NavLinks({ pathname, isBottomNav = false }: { pathname: string; isBottomNav?: boolean }) {
+    return (
         <>
             {navItems.map(item => {
-                const isActive = pathname === item.href;
+                const isActive = isActivePath(pathname, item.href);
                 return (
                     <Link
                         key={item.href}
@@ -153,6 +77,49 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
             })}
         </>
     );
+}
+
+// The session provider lives in the admin and driver layouts rather than the
+// root layout, so the public pages don't load it.
+export default function AdminLayout({ children }: { children: ReactNode }) {
+    return (
+        <SessionProvider refetchOnWindowFocus={false}>
+            <AdminShell>{children}</AdminShell>
+        </SessionProvider>
+    );
+}
+
+function AdminShell({ children }: { children: ReactNode }) {
+    const pathname = usePathname();
+    const { data: session } = useSession();
+    const [profileOpen, setProfileOpen] = useState(false);
+    const [stockOpen, setStockOpen] = useState(false);
+    const profileRef = useRef<HTMLDivElement>(null);
+
+    async function handleSignOut() {
+        await signOut({ callbackUrl: "/" });
+    }
+
+    // Close dropdown when clicking outside
+    useEffect(() => {
+        if (!profileOpen) return;
+        function onMouseDown(e: MouseEvent) {
+            if (profileRef.current && !profileRef.current.contains(e.target as Node)) {
+                setProfileOpen(false);
+            }
+        }
+        document.addEventListener("mousedown", onMouseDown);
+        return () => document.removeEventListener("mousedown", onMouseDown);
+    }, [profileOpen]);
+
+    // Close dropdown on route change
+    useEffect(() => {
+        setProfileOpen(false);
+    }, [pathname]);
+
+    const adminName = session?.user?.name ?? "Admin";
+    const driversActive = isActivePath(pathname, "/admin/drivers");
+    const vehiclesActive = isActivePath(pathname, "/admin/vehicles");
 
     return (
         <div style={{ minHeight: "100vh", background: "var(--bg-secondary)", display: "flex", flexDirection: "column" }}>
@@ -188,7 +155,7 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
 
                 {/* Desktop Nav Links */}
                 <nav className="desktop-nav" style={{ display: "flex", gap: "0.5rem" }}>
-                    <NavLinks />
+                    <NavLinks pathname={pathname} />
                 </nav>
 
                 {/* Profile circle — always visible on all screen sizes */}
@@ -255,9 +222,9 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
                                 style={{
                                     display: "flex", alignItems: "center", gap: "0.65rem",
                                     padding: "0.72rem 1.1rem",
-                                    color: pathname === "/admin/drivers" ? "var(--accent-primary)" : "var(--text-secondary)",
+                                    color: driversActive ? "var(--accent-primary)" : "var(--text-secondary)",
                                     fontWeight: 600, fontSize: "0.9rem", textDecoration: "none",
-                                    background: pathname === "/admin/drivers" ? "#eff6ff" : "transparent",
+                                    background: driversActive ? "#eff6ff" : "transparent",
                                     transition: "background 0.15s",
                                 }}
                             >
@@ -276,9 +243,9 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
                                 style={{
                                     display: "flex", alignItems: "center", gap: "0.65rem",
                                     padding: "0.72rem 1.1rem",
-                                    color: pathname === "/admin/vehicles" ? "var(--accent-primary)" : "var(--text-secondary)",
+                                    color: vehiclesActive ? "var(--accent-primary)" : "var(--text-secondary)",
                                     fontWeight: 600, fontSize: "0.9rem", textDecoration: "none",
-                                    background: pathname === "/admin/vehicles" ? "#eff6ff" : "transparent",
+                                    background: vehiclesActive ? "#eff6ff" : "transparent",
                                     transition: "background 0.15s",
                                 }}
                             >
@@ -294,7 +261,7 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
                             {/* Stock */}
                             <button
                                 type="button"
-                                onClick={() => { setProfileOpen(false); void openStockModal(); }}
+                                onClick={() => { setProfileOpen(false); setStockOpen(true); }}
                                 style={{
                                     display: "flex", alignItems: "center", gap: "0.65rem",
                                     padding: "0.72rem 1.1rem",
@@ -357,77 +324,7 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
             </main>
 
             {/* Stock modal */}
-            {stockOpen && (
-                <div
-                    style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem", zIndex: 300 }}
-                    onClick={() => { setStockOpen(false); setStockError(""); setStockSuccess(""); }}
-                >
-                    <div className="card" style={{ width: "100%", maxWidth: "360px" }} onClick={(e) => e.stopPropagation()}>
-                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1.25rem" }}>
-                            <h3 style={{ margin: 0 }}>Stock</h3>
-                            <button type="button" className="btn btn-sm btn-secondary" onClick={() => { setStockOpen(false); setStockError(""); setStockSuccess(""); }}>
-                                Close
-                            </button>
-                        </div>
-
-                        {stockLoading ? (
-                            <div style={{ color: "var(--text-muted)", fontSize: "0.9rem", textAlign: "center", padding: "1rem 0" }}>Loading...</div>
-                        ) : (
-                            <>
-                                {(["cans", "dispensers", "stands"] as const).map((key) => (
-                                    <div key={key} style={{ marginBottom: "1rem" }}>
-                                        <div className="form-label" style={{ marginBottom: "0.4rem", textTransform: "capitalize" }}>{key}</div>
-                                        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                                            <button
-                                                type="button"
-                                                className="btn btn-secondary btn-sm"
-                                                style={{ width: "36px", flexShrink: 0 }}
-                                                onClick={() => setStockValues((v) => ({ ...v, [key]: Math.max(0, v[key] - 1) }))}
-                                            >
-                                                –
-                                            </button>
-                                            <input
-                                                className="form-input"
-                                                type="number"
-                                                min="0"
-                                                step="1"
-                                                value={stockValues[key]}
-                                                onChange={(e) => {
-                                                    const parsed = parseInt(e.target.value, 10);
-                                                    setStockValues((v) => ({ ...v, [key]: Number.isNaN(parsed) ? 0 : Math.max(0, parsed) }));
-                                                }}
-                                                style={{ textAlign: "center", width: "80px" }}
-                                            />
-                                            <button
-                                                type="button"
-                                                className="btn btn-secondary btn-sm"
-                                                style={{ width: "36px", flexShrink: 0 }}
-                                                onClick={() => setStockValues((v) => ({ ...v, [key]: v[key] + 1 }))}
-                                            >
-                                                +
-                                            </button>
-                                        </div>
-                                    </div>
-                                ))}
-
-                                {stockUpdatedAt && (
-                                    <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "1rem" }}>
-                                        Last updated: {new Date(stockUpdatedAt).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}
-                                        {stockUpdatedBy ? ` · by ${stockUpdatedBy}` : ""}
-                                    </div>
-                                )}
-
-                                {stockError && <div className="alert alert-error" style={{ marginBottom: "0.75rem" }}>{stockError}</div>}
-                                {stockSuccess && <div className="alert alert-success" style={{ marginBottom: "0.75rem" }}>{stockSuccess}</div>}
-
-                                <button type="button" className="btn btn-primary btn-full" onClick={() => void saveStock()} disabled={stockSaving}>
-                                    {stockSaving ? "Saving..." : "Save Changes"}
-                                </button>
-                            </>
-                        )}
-                    </div>
-                </div>
-            )}
+            {stockOpen && <StockModal onClose={() => setStockOpen(false)} />}
 
             {/* Mobile Bottom Tab Bar */}
             <nav className="mobile-bottom-nav" style={{
@@ -443,7 +340,7 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
                 zIndex: 100,
                 boxShadow: "0 -2px 10px rgba(0,0,0,0.05)",
             }}>
-                <NavLinks isBottomNav={true} />
+                <NavLinks pathname={pathname} isBottomNav={true} />
             </nav>
 
         </div>
