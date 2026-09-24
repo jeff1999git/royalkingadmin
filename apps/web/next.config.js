@@ -1,5 +1,14 @@
+import { readFileSync } from "node:fs";
+
+// App version shown next to Sign Out, so it is easy to tell which build a
+// phone is running. Bump "version" in package.json for each release.
+const { version } = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8"));
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+    env: {
+        NEXT_PUBLIC_APP_VERSION: version,
+    },
     serverExternalPackages: ["mongoose"],
     poweredByHeader: false,
     // Dev server only: Next.js 16 refuses dev requests (page scripts, live

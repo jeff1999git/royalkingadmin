@@ -303,6 +303,9 @@ function AdminShell({ children }: { children: ReactNode }) {
                                 </svg>
                                 Sign Out
                             </button>
+                            <div style={{ padding: "0.3rem 1.1rem 0.6rem", fontSize: "0.72rem", color: "#94a3b8", fontWeight: 500 }}>
+                                v{process.env.NEXT_PUBLIC_APP_VERSION}
+                            </div>
                         </div>
                     )}
                 </div>
