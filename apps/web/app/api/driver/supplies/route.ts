@@ -1,146 +1,195 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Types } from "mongoose";
-import { getServerSession } from "next-auth";
-import { authOptions } from "../../../../lib/auth";
+import { badRequest, isPlainObject, notFound, optionalNumber, optionalString, serverError, unauthorized } from "../../../../lib/api";
+import { requireDriver } from "../../../../lib/authHelpers";
 import { deleteImageFromCloudinary, uploadImageToCloudinary } from "../../../../lib/cloudinary";
+import { istDateRange, istDayEnd, istDayStart } from "../../../../lib/istTime";
 import { connectToDatabase } from "../../../../lib/mongodb";
+import {
+  autoAmount,
+  parseOptionalNumber,
+  toProductType,
+  validateDeliveryQuantities,
+  type CaseSize,
+  type DeliveryQuantities,
+  type ProductType,
+} from "../../../../lib/supplyProduct";
 import SupplyLog from "../../../../models/SupplyLog";
 import Customer from "../../../../models/Customer";
+import Vehicle from "../../../../models/Vehicle";
+
+// Vercel refuses function request bodies over 4.5 MB, so stay under it.
+const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
+// The multipart body is the image plus a few short fields.
+const MAX_BODY_BYTES = MAX_IMAGE_BYTES + 64 * 1024;
+const RECENT_DAYS = 5;
+// Fields the driver screens never show.
+const LIST_PROJECTION = "-billImagePublicId -adminRemark -__v";
 
 type DriverSupplyRequestBody = {
-  logType?: "water" | "cash";
-  customerId?: string;
-  cansDelivered?: number | string;
-  cansTakenBack?: number | string;
-  vehicleId?: string;
-  notes?: string;
-  amount?: number | string;
-  cashType?: "debit" | "fuel";
+  logType?: unknown;
+  customerId?: unknown;
+  productType?: unknown;
+  cansDelivered?: unknown;
+  cansTakenBack?: unknown;
+  casesDelivered?: unknown;
+  caseSize?: unknown;
+  casePrice?: unknown;
+  vehicleId?: unknown;
+  notes?: unknown;
+  amount?: unknown;
+  cashType?: unknown;
+  paymentStatus?: unknown;
   billImageFile?: File | null;
 };
 
-async function parseDriverSupplyRequest(req: NextRequest): Promise<DriverSupplyRequestBody> {
+// JSON for deliveries; multipart when a fuel-bill photo comes along. Returns
+// null for a body that can't be read.
+async function parseDriverSupplyRequest(req: NextRequest): Promise<DriverSupplyRequestBody | null> {
   const contentType = req.headers.get("content-type") ?? "";
 
   if (contentType.includes("multipart/form-data")) {
-    const formData = await req.formData();
+    let formData: FormData;
+    try {
+      formData = await req.formData();
+    } catch {
+      return null;
+    }
+    const text = (key: string) => {
+      const value = formData.get(key);
+      return typeof value === "string" ? value : undefined;
+    };
     const billImage = formData.get("billImage");
-
     return {
-      logType: typeof formData.get("logType") === "string" ? (formData.get("logType") as "water" | "cash") : undefined,
-      customerId: typeof formData.get("customerId") === "string" ? formData.get("customerId") as string : undefined,
-      cansDelivered: typeof formData.get("cansDelivered") === "string" ? formData.get("cansDelivered") as string : undefined,
-      cansTakenBack: typeof formData.get("cansTakenBack") === "string" ? formData.get("cansTakenBack") as string : undefined,
-      vehicleId: typeof formData.get("vehicleId") === "string" ? formData.get("vehicleId") as string : undefined,
-      notes: typeof formData.get("notes") === "string" ? formData.get("notes") as string : undefined,
-      amount: typeof formData.get("amount") === "string" ? formData.get("amount") as string : undefined,
-      cashType: typeof formData.get("cashType") === "string" ? (formData.get("cashType") as "debit" | "fuel") : undefined,
+      logType: text("logType"),
+      customerId: text("customerId"),
+      cansDelivered: text("cansDelivered"),
+      cansTakenBack: text("cansTakenBack"),
+      productType: text("productType"),
+      casesDelivered: text("casesDelivered"),
+      caseSize: text("caseSize"),
+      casePrice: text("casePrice"),
+      vehicleId: text("vehicleId"),
+      notes: text("notes"),
+      amount: text("amount"),
+      cashType: text("cashType"),
+      paymentStatus: text("paymentStatus"),
       billImageFile: billImage instanceof File && billImage.size > 0 ? billImage : null,
     };
   }
 
-  return (await req.json()) as DriverSupplyRequestBody;
+  try {
+    const body: unknown = await req.json();
+    return isPlainObject(body) ? (body as DriverSupplyRequestBody) : null;
+  } catch {
+    return null;
+  }
 }
 
-export async function GET() {
-  const session = await getServerSession(authOptions);
-  if (!session || session.user.role !== "driver") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+// The client converts everything but HEIC/HEIF to JPEG before upload. Some
+// phones send HEIC with an empty MIME type, so the extension counts too.
+function isAcceptedImage(file: File) {
+  if (file.type.startsWith("image/")) return true;
+  return file.type === "" && /\.(heic|heif|jpe?g|png|webp)$/i.test(file.name);
+}
+
+export async function GET(req: NextRequest) {
+  const driver = await requireDriver();
+  if (!driver) return unauthorized();
+
+  // Default: only the last RECENT_DAYS days. A specific ?date=YYYY-MM-DD fetches that day on demand.
+  const dateParam = req.nextUrl.searchParams.get("date");
+  let start: Date;
+  let end: Date;
+  if (dateParam) {
+    const range = istDateRange(dateParam);
+    if (!range) return badRequest("Invalid date format.");
+    start = range.start;
+    end = range.end;
+  } else {
+    end = istDayEnd();
+    start = new Date(istDayStart().getTime() - (RECENT_DAYS - 1) * 24 * 60 * 60 * 1000);
   }
 
-  await connectToDatabase();
-  const logs = await SupplyLog.find({ driver: session.user.id })
-    .populate("vehicle", "name vehicleNumber capacity")
-    .populate("customer", "name phone area")
-    .sort({ suppliedAt: -1 })
-    .limit(50)
-    .lean();
+  try {
+    await connectToDatabase();
+    const logs = await SupplyLog.find({
+      driver: driver.id,
+      suppliedAt: { $gte: start, $lte: end },
+    })
+      .select(LIST_PROJECTION)
+      .populate("vehicle", "name vehicleNumber capacity")
+      .populate("customer", "name phone area")
+      .sort({ suppliedAt: -1 })
+      .limit(200)
+      .lean();
 
-  return NextResponse.json(logs);
+    return NextResponse.json(logs);
+  } catch (err) {
+    return serverError(err, "Failed to load your entries.");
+  }
 }
 
 export async function POST(req: NextRequest) {
-  const session = await getServerSession(authOptions);
-  if (!session || session.user.role !== "driver") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const driver = await requireDriver();
+  if (!driver) return unauthorized();
+
+  // Refuse an oversized upload before reading it into memory.
+  const declaredLength = Number(req.headers.get("content-length") ?? "0");
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_BODY_BYTES) {
+    return badRequest("Image is too large. Please keep it under 4 MB.");
   }
 
   const body = await parseDriverSupplyRequest(req);
+  if (!body) return badRequest("Invalid request body.");
+
   const logType = body.logType === "cash" ? "cash" : "water";
-  const customerId = body.customerId?.trim();
-  const vehicleId = body.vehicleId?.trim();
-  const notes = body.notes?.trim();
-  const cansDelivered =
-    body.cansDelivered === undefined || body.cansDelivered === ""
-      ? undefined
-      : Number(body.cansDelivered);
-  const cansTakenBack =
-    body.cansTakenBack === undefined || body.cansTakenBack === ""
-      ? undefined
-      : Number(body.cansTakenBack);
-  const amountValue =
-    body.amount === undefined || body.amount === null || body.amount === ""
-      ? undefined
-      : Number(body.amount);
-  const cashType = body.cashType;
+  const customerId = optionalString(body.customerId, 64);
+  const vehicleId = optionalString(body.vehicleId, 64);
+  const notes = optionalString(body.notes, 1000) || undefined;
+  const productType = toProductType(body.productType);
+  const quantities: DeliveryQuantities = {
+    productType,
+    cansDelivered: parseOptionalNumber(body.cansDelivered),
+    cansTakenBack: parseOptionalNumber(body.cansTakenBack),
+    casesDelivered: parseOptionalNumber(body.casesDelivered),
+    caseSize: optionalString(body.caseSize, 10) || undefined,
+    casePrice: parseOptionalNumber(body.casePrice),
+  };
+  const amountValue = optionalNumber(body.amount);
+  const cashType = body.cashType === "debit" || body.cashType === "fuel" ? body.cashType : undefined;
   const billImageFile = body.billImageFile ?? null;
 
   if (logType === "water") {
-    if (!customerId) {
-      return NextResponse.json({ error: "Customer is required." }, { status: 400 });
-    }
-    if (!Types.ObjectId.isValid(customerId)) {
-      return NextResponse.json({ error: "Invalid customer." }, { status: 400 });
-    }
-    if (cansDelivered === undefined && cansTakenBack === undefined) {
-      return NextResponse.json({ error: "Enter cans delivered, cans taken back, or both." }, { status: 400 });
-    }
-    if (cansDelivered !== undefined && (!Number.isInteger(cansDelivered) || cansDelivered < 0)) {
-      return NextResponse.json({ error: "Cans delivered must be a non-negative integer." }, { status: 400 });
-    }
-    if (cansTakenBack !== undefined && (!Number.isInteger(cansTakenBack) || cansTakenBack < 0)) {
-      return NextResponse.json({ error: "Cans taken back must be a non-negative integer." }, { status: 400 });
-    }
-    if (vehicleId && !Types.ObjectId.isValid(vehicleId)) {
-      return NextResponse.json({ error: "Invalid vehicle." }, { status: 400 });
-    }
-  }
-
-  if (logType === "cash") {
-    if (amountValue === undefined || !Number.isFinite(amountValue) || amountValue < 0) {
-      return NextResponse.json({ error: "Amount must be a valid non-negative number." }, { status: 400 });
-    }
-    if (cashType !== "debit" && cashType !== "fuel") {
-      return NextResponse.json({ error: "Cash type must be debit or fuel." }, { status: 400 });
-    }
-    if (billImageFile && !billImageFile.type.startsWith("image/")) {
-      return NextResponse.json({ error: "Please upload a valid image file." }, { status: 400 });
-    }
-    if (billImageFile && billImageFile.size > 8 * 1024 * 1024) {
-      return NextResponse.json({ error: "Image is too large. Please keep it under 8 MB." }, { status: 400 });
-    }
-    if (cashType === "fuel" && !billImageFile) {
-      return NextResponse.json({ error: "Fuel bill image is required for fuel entries." }, { status: 400 });
-    }
-  }
-
-  await connectToDatabase();
-
-  let calculatedAmount: number | undefined;
-
-  if (logType === "water" && customerId) {
-    const customer = await Customer.findOne({ _id: customerId, isActive: true }).lean();
-    if (!customer) {
-      return NextResponse.json({ error: "Customer not found or inactive." }, { status: 404 });
-    }
-    if (cansDelivered !== undefined && customer.cashPerCan !== undefined) {
-      calculatedAmount = cansDelivered * customer.cashPerCan;
-    }
+    if (!customerId) return badRequest("Customer is required.");
+    if (!Types.ObjectId.isValid(customerId)) return badRequest("Invalid customer.");
+    const quantityError = validateDeliveryQuantities(quantities);
+    if (quantityError) return badRequest(quantityError);
+    if (vehicleId && !Types.ObjectId.isValid(vehicleId)) return badRequest("Invalid vehicle.");
+  } else {
+    if (amountValue === undefined || amountValue < 0) return badRequest("Amount must be a valid non-negative number.");
+    if (!cashType) return badRequest("Cash type must be debit or fuel.");
+    if (billImageFile && !isAcceptedImage(billImageFile)) return badRequest("Please upload a valid image file.");
+    if (billImageFile && billImageFile.size > MAX_IMAGE_BYTES) return badRequest("Image is too large. Please keep it under 4 MB.");
+    if (cashType === "fuel" && !billImageFile) return badRequest("Fuel bill image is required for fuel entries.");
   }
 
   let uploadedBillImage: { secureUrl: string; publicId: string } | null = null;
 
   try {
+    await connectToDatabase();
+
+    let calculatedAmount: number | undefined;
+    if (logType === "water" && customerId) {
+      const [customer, vehicle] = await Promise.all([
+        Customer.findOne({ _id: customerId, isActive: true }).select("cashPerCan").lean(),
+        vehicleId ? Vehicle.exists({ _id: vehicleId }) : Promise.resolve(null),
+      ]);
+      if (!customer) return notFound("Customer not found or inactive.");
+      if (vehicleId && !vehicle) return badRequest("Vehicle not found.");
+      calculatedAmount = autoAmount(customer, quantities);
+    }
+
     if (logType === "cash" && billImageFile) {
       uploadedBillImage = await uploadImageToCloudinary(billImageFile);
     }
@@ -152,25 +201,39 @@ export async function POST(req: NextRequest) {
       logType: "water" | "cash";
       customer?: string;
       vehicle?: string;
+      productType?: ProductType;
       cansDelivered?: number;
       cansTakenBack?: number;
+      casesDelivered?: number;
+      caseSize?: CaseSize;
+      casePrice?: number;
       amount?: number;
+      paymentStatus?: "cash" | "upi" | "not_paid";
       cashType?: "debit" | "fuel";
       billImageUrl?: string;
       billImagePublicId?: string;
     } = {
-      driver: session.user.id,
+      driver: driver.id,
       suppliedAt: new Date(),
-      notes,
       logType,
     };
+    if (notes) payload.notes = notes;
 
     if (logType === "water") {
       payload.customer = customerId;
-      payload.cansDelivered = cansDelivered;
-      if (cansTakenBack !== undefined) payload.cansTakenBack = cansTakenBack;
+      payload.productType = productType;
+      if (productType === "case") {
+        payload.casesDelivered = quantities.casesDelivered;
+        payload.caseSize = quantities.caseSize as CaseSize; // validated above
+        payload.casePrice = quantities.casePrice;
+      } else {
+        if (quantities.cansDelivered !== undefined) payload.cansDelivered = quantities.cansDelivered;
+        if (quantities.cansTakenBack !== undefined) payload.cansTakenBack = quantities.cansTakenBack;
+      }
       if (vehicleId) payload.vehicle = vehicleId;
       if (calculatedAmount !== undefined) payload.amount = calculatedAmount;
+      const ps = body.paymentStatus;
+      payload.paymentStatus = ps === "upi" || ps === "not_paid" ? ps : "cash";
     } else {
       payload.amount = amountValue;
       payload.cashType = cashType;
@@ -181,20 +244,19 @@ export async function POST(req: NextRequest) {
     }
 
     const created = await SupplyLog.create(payload);
-
-    const populated = await SupplyLog.findById(created._id)
-      .populate("vehicle", "name vehicleNumber capacity")
-      .populate("customer", "name phone area")
-      .lean();
-
-    return NextResponse.json(populated, { status: 201 });
+    // The driver screen only checks res.ok and refetches its list, so the row
+    // goes back as saved, without extra populate queries.
+    return NextResponse.json(created.toObject(), { status: 201 });
   } catch (error) {
     if (uploadedBillImage?.publicId) {
       await deleteImageFromCloudinary(uploadedBillImage.publicId).catch(() => undefined);
     }
-
-    const message =
-      error instanceof Error ? error.message : "Failed to save delivery log.";
-    return NextResponse.json({ error: message }, { status: 500 });
+    // Upload problems carry a message written for the driver; anything else is
+    // logged and answered generically.
+    if (error instanceof Error && /upload|timed out/i.test(error.message)) {
+      console.error("[driver supplies POST]", error);
+      return NextResponse.json({ error: error.message }, { status: 502 });
+    }
+    return serverError(error, "Failed to save the entry. Please try again.");
   }
 }

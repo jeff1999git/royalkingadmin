@@ -1,93 +1,99 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "../../../../lib/auth";
+import { badRequest, jsonError, optionalString, readJsonObject, requiredString, serverError, unauthorized } from "../../../../lib/api";
+import { requireAdmin } from "../../../../lib/authHelpers";
 import { connectToDatabase } from "../../../../lib/mongodb";
 import User from "../../../../models/User";
 import Vehicle from "../../../../models/Vehicle";
 import bcrypt from "bcryptjs";
 import { Types } from "mongoose";
 
-function canPopulateAssignedVehicle() {
-    return Boolean(User.schema.path("assignedVehicle"));
-}
+// Logins are capped at this length (lib/auth.ts), so a longer password could never sign in.
+const MAX_PASSWORD_LENGTH = 200;
 
 // GET — list all drivers
 export async function GET() {
-    const session = await getServerSession(authOptions);
-    if (!session || session.user.role !== "admin") {
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const admin = await requireAdmin();
+    if (!admin) return unauthorized();
 
-    await connectToDatabase();
-    const driversQuery = User.find({ role: "driver" }).select("-password");
-    if (canPopulateAssignedVehicle()) {
-        driversQuery.populate("assignedVehicle", "name vehicleNumber capacity isActive");
+    try {
+        await connectToDatabase();
+        const drivers = await User.find({ role: "driver" })
+            .select("-password")
+            .populate("assignedVehicle", "name vehicleNumber capacity isActive")
+            .lean();
+        return NextResponse.json(drivers);
+    } catch (err) {
+        return serverError(err);
     }
-    const drivers = await driversQuery.lean();
-    return NextResponse.json(drivers);
 }
 
 // POST — create a new driver
 export async function POST(req: NextRequest) {
-    const session = await getServerSession(authOptions);
-    if (!session || session.user.role !== "admin") {
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const admin = await requireAdmin();
+    if (!admin) return unauthorized();
 
-    const body = await req.json() as {
-        name: string;
-        username: string;
-        password: string;
-        phone: string;
-        assignedVehicleId?: string;
-    };
-    const { name, username, password, phone, assignedVehicleId } = body;
+    const body = await readJsonObject(req);
+    if (!body) return badRequest("Invalid request body.");
+
+    const name = requiredString(body.name, 200);
+    const username = requiredString(body.username, 100);
+    const phone = requiredString(body.phone, 30);
+    const password = typeof body.password === "string" ? body.password : "";
+    const assignedVehicleId = optionalString(body.assignedVehicleId, 100);
 
     if (!name || !username || !password || !phone) {
-        return NextResponse.json({ error: "All fields are required" }, { status: 400 });
+        return badRequest("All fields are required");
+    }
+    if (password.length < 6) {
+        return badRequest("Password must be at least 6 characters.");
+    }
+    if (password.length > MAX_PASSWORD_LENGTH) {
+        return badRequest(`Password must be at most ${MAX_PASSWORD_LENGTH} characters.`);
     }
 
-    await connectToDatabase();
+    try {
+        await connectToDatabase();
 
-    const existing = await User.findOne({ username }).lean();
-    if (existing) {
-        return NextResponse.json({ error: "Username already taken" }, { status: 409 });
-    }
-
-    let assignedVehicle: string | null = null;
-    if (assignedVehicleId && assignedVehicleId.trim()) {
-        const normalizedVehicleId = assignedVehicleId.trim();
-        if (!Types.ObjectId.isValid(normalizedVehicleId)) {
-            return NextResponse.json({ error: "Invalid assigned vehicle." }, { status: 400 });
+        const existing = await User.exists({ username });
+        if (existing) {
+            return jsonError("Username already taken", 409);
         }
-        const vehicle = await Vehicle.findById(normalizedVehicleId).lean();
-        if (!vehicle || !vehicle.isActive) {
-            return NextResponse.json({ error: "Assigned vehicle is not available." }, { status: 400 });
+
+        let assignedVehicle: string | null = null;
+        if (assignedVehicleId) {
+            if (!Types.ObjectId.isValid(assignedVehicleId)) {
+                return badRequest("Invalid assigned vehicle.");
+            }
+            const vehicle = await Vehicle.exists({ _id: assignedVehicleId, isActive: true });
+            if (!vehicle) {
+                return badRequest("Assigned vehicle is not available.");
+            }
+            assignedVehicle = assignedVehicleId;
         }
-        assignedVehicle = normalizedVehicleId;
-    }
 
-    const hashed = await bcrypt.hash(password, 12);
-    const createdDriver = await User.create({
-        name,
-        username,
-        password: hashed,
-        phone,
-        role: "driver",
-        assignedVehicle,
-    });
-    if (!createdDriver) {
-        return NextResponse.json({ error: "Failed to create driver" }, { status: 500 });
-    }
+        const hashed = await bcrypt.hash(password, 12);
+        const createdDriver = await User.create({
+            name,
+            username,
+            password: hashed,
+            phone,
+            role: "driver",
+            assignedVehicle,
+        });
 
-    const driverQuery = User.findById(createdDriver._id).select("-password");
-    if (canPopulateAssignedVehicle()) {
-        driverQuery.populate("assignedVehicle", "name vehicleNumber capacity isActive");
-    }
-    const driver = await driverQuery.lean();
-    if (!driver) {
-        return NextResponse.json({ error: "Failed to load created driver" }, { status: 500 });
-    }
+        const driver = await User.findById(createdDriver._id)
+            .select("-password")
+            .populate("assignedVehicle", "name vehicleNumber capacity isActive")
+            .lean();
+        if (!driver) {
+            return jsonError("Failed to load created driver", 500);
+        }
 
-    return NextResponse.json(driver, { status: 201 });
+        return NextResponse.json(driver, { status: 201 });
+    } catch (err: unknown) {
+        if (err && typeof err === "object" && "code" in err && (err as { code: number }).code === 11000) {
+            return jsonError("Username already taken", 409);
+        }
+        return serverError(err);
+    }
 }

@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
-import { signOut, useSession } from "next-auth/react";
+import { usePathname } from "next/navigation";
+import { SessionProvider, signOut, useSession } from "next-auth/react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
+import StockModal from "../components/StockModal";
 
 const navItems = [
     {
@@ -41,41 +42,17 @@ const navItems = [
     },
 ];
 
-export default function AdminLayout({ children }: { children: ReactNode }) {
-    const pathname = usePathname();
-    const router = useRouter();
-    const { data: session } = useSession();
-    const [profileOpen, setProfileOpen] = useState(false);
-    const profileRef = useRef<HTMLDivElement>(null);
+// A nav item is active on its own page and on any page under it, so
+// Customers stays highlighted on /admin/customers/<id>.
+function isActivePath(pathname: string, href: string) {
+    return pathname === href || pathname.startsWith(`${href}/`);
+}
 
-    async function handleSignOut() {
-        await signOut({ redirect: false });
-        router.push("/");
-    }
-
-    // Close dropdown when clicking outside
-    useEffect(() => {
-        if (!profileOpen) return;
-        function onMouseDown(e: MouseEvent) {
-            if (profileRef.current && !profileRef.current.contains(e.target as Node)) {
-                setProfileOpen(false);
-            }
-        }
-        document.addEventListener("mousedown", onMouseDown);
-        return () => document.removeEventListener("mousedown", onMouseDown);
-    }, [profileOpen]);
-
-    // Close dropdown on route change
-    useEffect(() => {
-        setProfileOpen(false);
-    }, [pathname]);
-
-    const adminName = session?.user?.name ?? "Admin";
-
-    const NavLinks = ({ isBottomNav = false }: { isBottomNav?: boolean }) => (
+function NavLinks({ pathname, isBottomNav = false }: { pathname: string; isBottomNav?: boolean }) {
+    return (
         <>
             {navItems.map(item => {
-                const isActive = pathname === item.href;
+                const isActive = isActivePath(pathname, item.href);
                 return (
                     <Link
                         key={item.href}
@@ -100,6 +77,49 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
             })}
         </>
     );
+}
+
+// The session provider lives in the admin and driver layouts rather than the
+// root layout, so the public pages don't load it.
+export default function AdminLayout({ children }: { children: ReactNode }) {
+    return (
+        <SessionProvider refetchOnWindowFocus={false}>
+            <AdminShell>{children}</AdminShell>
+        </SessionProvider>
+    );
+}
+
+function AdminShell({ children }: { children: ReactNode }) {
+    const pathname = usePathname();
+    const { data: session } = useSession();
+    const [profileOpen, setProfileOpen] = useState(false);
+    const [stockOpen, setStockOpen] = useState(false);
+    const profileRef = useRef<HTMLDivElement>(null);
+
+    async function handleSignOut() {
+        await signOut({ callbackUrl: "/" });
+    }
+
+    // Close dropdown when clicking outside
+    useEffect(() => {
+        if (!profileOpen) return;
+        function onMouseDown(e: MouseEvent) {
+            if (profileRef.current && !profileRef.current.contains(e.target as Node)) {
+                setProfileOpen(false);
+            }
+        }
+        document.addEventListener("mousedown", onMouseDown);
+        return () => document.removeEventListener("mousedown", onMouseDown);
+    }, [profileOpen]);
+
+    // Close dropdown on route change
+    useEffect(() => {
+        setProfileOpen(false);
+    }, [pathname]);
+
+    const adminName = session?.user?.name ?? "Admin";
+    const driversActive = isActivePath(pathname, "/admin/drivers");
+    const vehiclesActive = isActivePath(pathname, "/admin/vehicles");
 
     return (
         <div style={{ minHeight: "100vh", background: "var(--bg-secondary)", display: "flex", flexDirection: "column" }}>
@@ -135,7 +155,7 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
 
                 {/* Desktop Nav Links */}
                 <nav className="desktop-nav" style={{ display: "flex", gap: "0.5rem" }}>
-                    <NavLinks />
+                    <NavLinks pathname={pathname} />
                 </nav>
 
                 {/* Profile circle — always visible on all screen sizes */}
@@ -202,9 +222,9 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
                                 style={{
                                     display: "flex", alignItems: "center", gap: "0.65rem",
                                     padding: "0.72rem 1.1rem",
-                                    color: pathname === "/admin/drivers" ? "var(--accent-primary)" : "var(--text-secondary)",
+                                    color: driversActive ? "var(--accent-primary)" : "var(--text-secondary)",
                                     fontWeight: 600, fontSize: "0.9rem", textDecoration: "none",
-                                    background: pathname === "/admin/drivers" ? "#eff6ff" : "transparent",
+                                    background: driversActive ? "#eff6ff" : "transparent",
                                     transition: "background 0.15s",
                                 }}
                             >
@@ -223,9 +243,9 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
                                 style={{
                                     display: "flex", alignItems: "center", gap: "0.65rem",
                                     padding: "0.72rem 1.1rem",
-                                    color: pathname === "/admin/vehicles" ? "var(--accent-primary)" : "var(--text-secondary)",
+                                    color: vehiclesActive ? "var(--accent-primary)" : "var(--text-secondary)",
                                     fontWeight: 600, fontSize: "0.9rem", textDecoration: "none",
-                                    background: pathname === "/admin/vehicles" ? "#eff6ff" : "transparent",
+                                    background: vehiclesActive ? "#eff6ff" : "transparent",
                                     transition: "background 0.15s",
                                 }}
                             >
@@ -237,6 +257,29 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
                                 </svg>
                                 Vehicles
                             </Link>
+
+                            {/* Stock */}
+                            <button
+                                type="button"
+                                onClick={() => { setProfileOpen(false); setStockOpen(true); }}
+                                style={{
+                                    display: "flex", alignItems: "center", gap: "0.65rem",
+                                    padding: "0.72rem 1.1rem",
+                                    width: "100%", border: "none",
+                                    color: "var(--text-secondary)",
+                                    fontWeight: 600, fontSize: "0.9rem", textDecoration: "none",
+                                    background: "transparent",
+                                    cursor: "pointer", textAlign: "left",
+                                    transition: "background 0.15s",
+                                }}
+                            >
+                                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                                    <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                                    <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
+                                    <line x1="12" y1="22.08" x2="12" y2="12" />
+                                </svg>
+                                Stock
+                            </button>
 
                             {/* Divider */}
                             <div style={{ height: "1px", background: "#f1f5f9", margin: "0.2rem 0" }} />
@@ -260,6 +303,9 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
                                 </svg>
                                 Sign Out
                             </button>
+                            <div style={{ padding: "0.3rem 1.1rem 0.6rem", fontSize: "0.72rem", color: "#94a3b8", fontWeight: 500 }}>
+                                v{process.env.NEXT_PUBLIC_APP_VERSION}
+                            </div>
                         </div>
                     )}
                 </div>
@@ -280,6 +326,9 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
                 {children}
             </main>
 
+            {/* Stock modal */}
+            {stockOpen && <StockModal onClose={() => setStockOpen(false)} />}
+
             {/* Mobile Bottom Tab Bar */}
             <nav className="mobile-bottom-nav" style={{
                 position: "fixed",
@@ -294,7 +343,7 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
                 zIndex: 100,
                 boxShadow: "0 -2px 10px rgba(0,0,0,0.05)",
             }}>
-                <NavLinks isBottomNav={true} />
+                <NavLinks pathname={pathname} isBottomNav={true} />
             </nav>
 
         </div>

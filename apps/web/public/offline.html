@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0a3d91" />
+    <title>Offline · Royal King Water Supply</title>
+    <!--
+      Served by public/sw.js when a page can't load. It must work with no
+      network at all, so everything is inline: no Next.js chunks, no fonts.
+    -->
+    <style>
+      :root {
+        --accent: #0a3d91;
+        --accent-hover: #08337a;
+        --bg: #f8fafc;
+        --text: #111827;
+        --text-secondary: #334155;
+        --border: #e2e8f0;
+      }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      html, body { height: 100%; }
+      body {
+        font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 1.5rem;
+        padding-bottom: calc(1.5rem + env(safe-area-inset-bottom));
+      }
+      .card {
+        width: 100%;
+        max-width: 380px;
+        background: #fff;
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        padding: 2rem 1.5rem;
+        text-align: center;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+      }
+      .badge {
+        width: 64px;
+        height: 64px;
+        margin: 0 auto 1.25rem;
+        border-radius: 16px;
+        background: var(--accent);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      h1 { font-size: 1.35rem; font-weight: 800; letter-spacing: -0.02em; margin-bottom: 0.5rem; }
+      p { color: var(--text-secondary); font-size: 0.95rem; line-height: 1.5; margin-bottom: 1.5rem; }
+      button {
+        width: 100%;
+        border: 0;
+        border-radius: 6px;
+        padding: 0.85rem 1rem;
+        font: inherit;
+        font-weight: 700;
+        font-size: 1rem;
+        color: #fff;
+        background: var(--accent);
+        cursor: pointer;
+      }
+      button:hover { background: var(--accent-hover); }
+      .hint { margin: 1rem 0 0; font-size: 0.8rem; color: #64748b; }
+    </style>
+  </head>
+  <body>
+    <main class="card">
+      <div class="badge" aria-hidden="true">
+        <svg width="34" height="34" viewBox="0 0 24 24">
+          <path d="M12 2C12 2 5 9.5 5 15a7 7 0 0 0 14 0C19 9.5 12 2 12 2Z" fill="#fff" />
+          <path d="M8.6 15.4a3.6 3.6 0 0 0 3.1 3.4" fill="none" stroke="#0a3d91" stroke-width="1.3" stroke-linecap="round" />
+        </svg>
+      </div>
+      <h1>You're offline</h1>
+      <p>Check your mobile data or Wi-Fi and try again. Nothing you already saved is lost.</p>
+      <button type="button" id="retry">Try again</button>
+      <p class="hint">This page reloads by itself when the connection comes back.</p>
+    </main>
+    <script>
+      document.getElementById("retry").addEventListener("click", function () {
+        location.reload();
+      });
+      window.addEventListener("online", function () {
+        location.reload();
+      });
+    </script>
+  </body>
+</html>

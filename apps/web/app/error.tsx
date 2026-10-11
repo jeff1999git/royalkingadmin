@@ -23,7 +23,7 @@ export default function Error({
                     Something went wrong
                 </h2>
                 <p style={{ color: "var(--text-secondary)", marginBottom: "1.5rem", fontSize: "0.95rem" }}>
-                    {error.message || "An unexpected error occurred."}
+                    An unexpected error occurred. Please try again.
                 </p>
                 <button onClick={reset} className="btn btn-primary" style={{ padding: "0.75rem 1.5rem" }}>
                     Try again

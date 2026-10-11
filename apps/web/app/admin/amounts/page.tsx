@@ -1,14 +1,25 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
+import Link from "next/link";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import {
+  locationTypeLabel,
+  useAdminDrivers,
+  useAdminNewCustomers,
+  useAdminVehicles,
+  type Driver,
+  type NewCustomer,
+  type Vehicle,
+} from "../../hooks/useAdminQueries";
+import { istDayKey, istToday } from "../../../lib/format";
+import { useEscapeKey } from "../../hooks/useEscapeKey";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-interface DailyDelivery { date: string; count: number; totalCans: number; }
+interface DailyDelivery { date: string; count: number; totalCans: number; totalCases: number; }
 interface DailyRegistration { date: string; count: number; }
 interface AnalyticsData { deliveries: DailyDelivery[]; registrations: DailyRegistration[]; }
-interface Driver { _id: string; name: string; username: string; }
-interface VehicleItem { _id: string; name: string; vehicleNumber: string; }
 
 interface FilterState {
   dateMode: "quick" | "custom";
@@ -30,7 +41,9 @@ const DEFAULT_FILTERS: FilterState = {
 
 const QUICK_DAYS = [7, 14, 30, 90] as const;
 
-function buildQuery(f: FilterState): string {
+// Date window only (from/to or days). Also used for the new-customers list,
+// which isn't filtered by driver or vehicle.
+function buildRangeQuery(f: FilterState): string {
   const p = new URLSearchParams();
   if (f.dateMode === "custom" && f.from && f.to) {
     p.set("from", f.from);
@@ -38,6 +51,11 @@ function buildQuery(f: FilterState): string {
   } else {
     p.set("days", String(f.quickDays));
   }
+  return p.toString();
+}
+
+function buildQuery(f: FilterState): string {
+  const p = new URLSearchParams(buildRangeQuery(f));
   if (f.driverId) p.set("driverId", f.driverId);
   if (f.vehicleId) p.set("vehicleId", f.vehicleId);
   return p.toString();
@@ -203,14 +221,217 @@ function LineChart({
 
 // ── Stat Card ─────────────────────────────────────────────────────────────────
 
-function StatCard({ label, value, accent }: { label: string; value: number; accent: string }) {
-  return (
-    <div className="card stat-card" style={{ borderTop: `3px solid ${accent}` }}>
+function StatCard({
+  label,
+  value,
+  accent,
+  onClick,
+  actionLabel,
+}: {
+  label: string;
+  value: number;
+  accent: string;
+  /** Makes the card a button, e.g. to open the list behind the number. */
+  onClick?: () => void;
+  actionLabel?: string;
+}) {
+  const content = (
+    <>
       <div className="stat-card-label" style={{ color: "var(--text-muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: "0.3rem" }}>
         {label}
       </div>
       <div className="stat-card-value" style={{ fontWeight: 800, color: "var(--text-primary)", lineHeight: 1 }}>
         {value.toLocaleString("en-IN")}
+      </div>
+    </>
+  );
+
+  if (!onClick) {
+    return (
+      <div className="card stat-card" style={{ borderTop: `3px solid ${accent}` }}>
+        {content}
+      </div>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      className="card stat-card stat-card-button"
+      style={{ borderTop: `3px solid ${accent}` }}
+      onClick={onClick}
+      aria-haspopup="dialog"
+    >
+      {content}
+      {actionLabel && <div className="stat-card-action">{actionLabel} ›</div>}
+    </button>
+  );
+}
+
+// ── New Customers list ────────────────────────────────────────────────────────
+
+// Analytics days are IST days, so show dates in IST whatever the device timezone.
+const IST_DATE = new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", year: "numeric" });
+const IST_TIME = new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", hour: "numeric", minute: "2-digit", hour12: true });
+
+function formatIst(formatter: Intl.DateTimeFormat, iso?: string): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? "" : formatter.format(d);
+}
+
+function addedByLabel(addedBy: NewCustomer["addedBy"]): string {
+  if (addedBy.kind === "driver") return `${addedBy.name} (@${addedBy.username})`;
+  if (addedBy.kind === "deleted-driver") return "A driver who was later removed";
+  return "Admin";
+}
+
+function NewCustomerRow({ customer }: { customer: NewCustomer }) {
+  const addedDay = istDayKey(customer.createdAt);
+  const registeredDay = customer.registeredDate ? istDayKey(customer.registeredDate) : "";
+  // The admin can set a different "Added Date" on the customer form; the
+  // analytics count uses the day the record was actually created.
+  const showRegistered = Boolean(registeredDay && registeredDay !== addedDay);
+
+  const details = [
+    locationTypeLabel(customer.locationType) ?? "",
+    `${customer.subscriptionCans} can${customer.subscriptionCans === 1 ? "" : "s"}/day`,
+    customer.cashPerCan !== undefined ? `₹${customer.cashPerCan}/can` : "",
+  ].filter(Boolean);
+
+  return (
+    <li>
+      <Link href={`/admin/customers/${customer._id}`} className="new-customer-row">
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", flexWrap: "wrap" }}>
+            <span style={{ fontWeight: 700, color: "var(--text-primary)" }}>{customer.name}</span>
+            {customer.isDeleted ? (
+              <span className="badge badge-danger" style={{ fontSize: "0.68rem", padding: "0.1rem 0.45rem" }}>Deleted</span>
+            ) : !customer.isActive ? (
+              <span className="badge badge-warning" style={{ fontSize: "0.68rem", padding: "0.1rem 0.45rem" }}>Inactive</span>
+            ) : null}
+          </div>
+          <div style={{ fontSize: "0.82rem", color: "var(--text-secondary)" }}>
+            {[customer.phone, customer.area].filter(Boolean).join(" · ")}
+          </div>
+          {details.length > 0 && (
+            <div style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{details.join(" · ")}</div>
+          )}
+          <div style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
+            Added by {addedByLabel(customer.addedBy)}
+            {showRegistered && ` · Registered ${formatIst(IST_DATE, customer.registeredDate)}`}
+          </div>
+        </div>
+        <div style={{ textAlign: "right", flexShrink: 0 }}>
+          <div style={{ fontSize: "0.82rem", fontWeight: 600, color: "var(--text-primary)", whiteSpace: "nowrap" }}>
+            {formatIst(IST_DATE, customer.createdAt)}
+          </div>
+          <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", whiteSpace: "nowrap" }}>
+            {formatIst(IST_TIME, customer.createdAt)}
+          </div>
+        </div>
+      </Link>
+    </li>
+  );
+}
+
+function NewCustomersModal({
+  rangeQuery,
+  periodText,
+  otherFiltersActive,
+  onClose,
+}: {
+  rangeQuery: string;
+  periodText: string;
+  otherFiltersActive: boolean;
+  onClose: () => void;
+}) {
+  const { data, isLoading, isError, refetch, isFetching } = useAdminNewCustomers(rangeQuery);
+
+  useEscapeKey(onClose);
+
+  const customers = data?.customers ?? [];
+  const total = data?.total ?? 0;
+
+  return (
+    <div
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 200, display: "flex", alignItems: "flex-end", justifyContent: "center" }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="new-customers-title"
+        style={{
+          background: "#fff",
+          borderRadius: "20px 20px 0 0",
+          width: "100%",
+          maxWidth: "600px",
+          maxHeight: "88vh",
+          display: "flex",
+          flexDirection: "column",
+          paddingBottom: "env(safe-area-inset-bottom, 0px)",
+        }}
+      >
+        {/* Header */}
+        <div style={{ padding: "1.25rem 1.5rem 0.9rem", borderBottom: "1px solid var(--border)" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.75rem" }}>
+            <span id="new-customers-title" style={{ fontWeight: 800, fontSize: "1.1rem", color: "var(--text-primary)" }}>
+              New Customers
+            </span>
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close"
+              autoFocus
+              style={{ background: "none", border: "none", cursor: "pointer", padding: "0.25rem", color: "var(--text-muted)", display: "flex" }}
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          </div>
+          <div style={{ fontSize: "0.85rem", color: "var(--text-secondary)", marginTop: "0.2rem" }}>
+            {periodText}
+            {data && ` · ${total.toLocaleString("en-IN")} customer${total === 1 ? "" : "s"}`}
+          </div>
+          {otherFiltersActive && (
+            <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginTop: "0.35rem" }}>
+              The driver and vehicle filters don&apos;t apply to new customers.
+            </div>
+          )}
+        </div>
+
+        {/* Body */}
+        <div style={{ overflowY: "auto", padding: "0.5rem 1.5rem 1.25rem" }}>
+          {isLoading ? (
+            <div style={{ padding: "2rem 0", textAlign: "center", color: "var(--text-muted)" }}>Loading customers...</div>
+          ) : isError ? (
+            <div style={{ padding: "1rem 0" }}>
+              <div className="alert alert-error" style={{ marginBottom: "0.75rem" }}>Couldn&apos;t load the customer list.</div>
+              <button type="button" className="btn btn-secondary btn-sm" disabled={isFetching} onClick={() => void refetch()}>
+                {isFetching ? "Retrying..." : "Try again"}
+              </button>
+            </div>
+          ) : customers.length === 0 ? (
+            <div style={{ padding: "2rem 0", textAlign: "center", color: "var(--text-muted)" }}>
+              No new customers in this period.
+            </div>
+          ) : (
+            <>
+              {total > customers.length && (
+                <div style={{ fontSize: "0.8rem", color: "var(--text-muted)", padding: "0.5rem 0" }}>
+                  Showing the latest {customers.length.toLocaleString("en-IN")} of {total.toLocaleString("en-IN")}. Pick a shorter period to see the rest.
+                </div>
+              )}
+              <ul className="new-customer-list" style={{ listStyle: "none" }}>
+                {customers.map((customer) => (
+                  <NewCustomerRow key={customer._id} customer={customer} />
+                ))}
+              </ul>
+            </>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -280,9 +501,12 @@ function FilterModal({
   onApply: () => void;
   onClose: () => void;
   drivers: Driver[];
-  vehicles: VehicleItem[];
+  vehicles: Vehicle[];
 }) {
-  const today = new Date().toISOString().slice(0, 10);
+  // Analytics days are IST days, so the pickers allow the current IST day.
+  const today = istToday();
+
+  useEscapeKey(onClose);
 
   const canApply = draft.dateMode === "quick" || (draft.dateMode === "custom" && !!draft.from && !!draft.to);
 
@@ -291,19 +515,24 @@ function FilterModal({
       style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 200, display: "flex", alignItems: "flex-end", justifyContent: "center" }}
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div style={{
-        background: "#fff",
-        borderRadius: "20px 20px 0 0",
-        width: "100%",
-        maxWidth: "520px",
-        padding: "1.5rem 1.5rem 2rem",
-        maxHeight: "88vh",
-        overflowY: "auto",
-      }}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="filters-title"
+        style={{
+          background: "#fff",
+          borderRadius: "20px 20px 0 0",
+          width: "100%",
+          maxWidth: "520px",
+          padding: "1.5rem 1.5rem 2rem",
+          maxHeight: "88vh",
+          overflowY: "auto",
+        }}
+      >
         {/* Modal header */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1.5rem" }}>
-          <span style={{ fontWeight: 800, fontSize: "1.1rem", color: "var(--text-primary)" }}>Filters</span>
-          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", padding: "0.25rem", color: "var(--text-muted)", display: "flex" }}>
+          <span id="filters-title" style={{ fontWeight: 800, fontSize: "1.1rem", color: "var(--text-primary)" }}>Filters</span>
+          <button type="button" onClick={onClose} aria-label="Close" style={{ background: "none", border: "none", cursor: "pointer", padding: "0.25rem", color: "var(--text-muted)", display: "flex" }}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
               <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
             </svg>
@@ -490,44 +719,33 @@ export default function AnalyticsPage() {
   const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS);
   const [modalOpen, setModalOpen] = useState(false);
   const [draft, setDraft] = useState<FilterState>(DEFAULT_FILTERS);
+  const [newCustomersOpen, setNewCustomersOpen] = useState(false);
+  const closeNewCustomers = useCallback(() => setNewCustomersOpen(false), []);
 
-  const [data, setData] = useState<AnalyticsData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  // Dropdown data — shared React Query cache with the rest of the admin pages
+  const { data: driversData } = useAdminDrivers();
+  const { data: vehiclesData } = useAdminVehicles();
+  const drivers = useMemo<Driver[]>(() => driversData ?? [], [driversData]);
+  const vehicles = useMemo<Vehicle[]>(() => vehiclesData ?? [], [vehiclesData]);
 
-  const [drivers, setDrivers] = useState<Driver[]>([]);
-  const [vehicles, setVehicles] = useState<VehicleItem[]>([]);
-
-  // Fetch dropdown data once
-  useEffect(() => {
-    void fetch("/api/admin/drivers")
-      .then((r) => r.json())
-      .then((d: Driver[]) => setDrivers(Array.isArray(d) ? d : []))
-      .catch(() => {});
-    void fetch("/api/admin/vehicles")
-      .then((r) => r.json())
-      .then((v: VehicleItem[]) => setVehicles(Array.isArray(v) ? v : []))
-      .catch(() => {});
-  }, []);
-
-  const loadAnalytics = useCallback(async (f: FilterState) => {
-    setLoading(true);
-    setError("");
-    try {
-      const res = await fetch(`/api/admin/analytics?${buildQuery(f)}`, { cache: "no-store" });
-      if (!res.ok) throw new Error("Failed");
-      const json = (await res.json()) as AnalyticsData;
-      setData(json);
-    } catch {
-      setError("Failed to load analytics data.");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void loadAnalytics(filters);
-  }, [filters, loadAnalytics]);
+  // Keyed on the request itself: from/to left over from a custom range are
+  // ignored in quick mode, so they must not make a second cache entry.
+  const analyticsQuery = buildQuery(filters);
+  const {
+    data,
+    isLoading: loading,
+    isFetching,
+    isError,
+  } = useQuery<AnalyticsData>({
+    queryKey: ["admin", "analytics", analyticsQuery],
+    staleTime: 1000 * 60 * 2,
+    placeholderData: keepPreviousData,
+    queryFn: async () => {
+      const res = await fetch(`/api/admin/analytics?${analyticsQuery}`, { cache: "no-store" });
+      if (!res.ok) throw new Error("Failed to load analytics");
+      return (await res.json()) as AnalyticsData;
+    },
+  });
 
   function openModal() {
     setDraft(filters);
@@ -551,10 +769,11 @@ export default function AnalyticsPage() {
   }, [vehicles, filters.vehicleId]);
 
   const totals = useMemo(() => {
-    if (!data) return { deliveries: 0, cans: 0, customers: 0 };
+    if (!data) return { deliveries: 0, cans: 0, cases: 0, customers: 0 };
     return {
       deliveries: data.deliveries.reduce((s, d) => s + d.count, 0),
       cans: data.deliveries.reduce((s, d) => s + d.totalCans, 0),
+      cases: data.deliveries.reduce((s, d) => s + d.totalCases, 0),
       customers: data.registrations.reduce((s, r) => s + r.count, 0),
     };
   }, [data]);
@@ -565,6 +784,10 @@ export default function AnalyticsPage() {
   );
   const cansChartData = useMemo(
     () => (data?.deliveries ?? []).map((d) => ({ date: d.date, value: d.totalCans })),
+    [data],
+  );
+  const casesChartData = useMemo(
+    () => (data?.deliveries ?? []).map((d) => ({ date: d.date, value: d.totalCases })),
     [data],
   );
   const registrationChartData = useMemo(
@@ -638,25 +861,44 @@ export default function AnalyticsPage() {
         )}
       </div>
 
-      {error && <div className="alert alert-error" style={{ marginBottom: "1rem" }}>{error}</div>}
+      {isError && <div className="alert alert-error" style={{ marginBottom: "1rem" }}>Failed to load analytics data.</div>}
 
-      {/* Summary stat cards — always 3 columns, responsive sizing via style tag */}
+      {/* Summary stat cards — 4 across, 2×2 on phones; responsive sizing via style tag */}
       <style dangerouslySetInnerHTML={{ __html: `
-        .stat-cards-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.6rem; margin-bottom: 1.25rem; }
+        .stat-cards-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.6rem; margin-bottom: 1.25rem; }
         .stat-card { padding: 0.85rem 1rem; }
         .stat-card-label { font-size: 0.72rem; }
         .stat-card-value { font-size: 1.75rem; }
+        .stat-card-button { width: 100%; font: inherit; color: inherit; text-align: left; cursor: pointer; transition: box-shadow 0.15s, transform 0.15s; }
+        .stat-card-button:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }
+        .stat-card-button:focus-visible { outline: none; box-shadow: var(--shadow-glow); }
+        .stat-card-action { margin-top: 0.45rem; font-size: 0.72rem; font-weight: 700; color: var(--accent-primary); }
+        .new-customer-list > li + li { border-top: 1px solid var(--border); }
+        .new-customer-row { display: flex; gap: 0.75rem; align-items: flex-start; padding: 0.75rem 0.5rem; margin: 0.15rem -0.5rem; border-radius: 8px; line-height: 1.45; }
+        .new-customer-row:hover, .new-customer-row:focus-visible { background: var(--bg-card-hover); outline: none; }
+        @media (max-width: 600px) {
+          .stat-cards-row { grid-template-columns: repeat(2, 1fr); }
+        }
         @media (max-width: 400px) {
           .stat-cards-row { gap: 0.4rem; }
           .stat-card { padding: 0.65rem 0.6rem; }
           .stat-card-label { font-size: 0.6rem; }
           .stat-card-value { font-size: 1.4rem; }
+          .stat-card-action { font-size: 0.6rem; }
         }
       ` }} />
-      <div className="stat-cards-row">
+      {/* Dimmed while a new period or filter loads: the previous totals stay up until then */}
+      <div className="stat-cards-row" style={{ opacity: isFetching ? 0.6 : 1 }} aria-busy={isFetching}>
         <StatCard label="Total Deliveries" value={totals.deliveries} accent="var(--accent-primary)" />
         <StatCard label="Total Cans Delivered" value={totals.cans} accent="#0ea5e9" />
-        <StatCard label="New Customers" value={totals.customers} accent="#8b5cf6" />
+        <StatCard label="Total Cases Delivered" value={totals.cases} accent="#d97706" />
+        <StatCard
+          label="New Customers"
+          value={totals.customers}
+          accent="#8b5cf6"
+          onClick={() => setNewCustomersOpen(true)}
+          actionLabel="View list"
+        />
       </div>
 
       {loading ? (
@@ -670,6 +912,9 @@ export default function AnalyticsPage() {
           </ChartCard>
           <ChartCard title="Cans Delivered per Day">
             <BarChart data={cansChartData} color="#0ea5e9" gradientId="grad-cans" />
+          </ChartCard>
+          <ChartCard title="Cases Delivered per Day">
+            <BarChart data={casesChartData} color="#d97706" gradientId="grad-cases" />
           </ChartCard>
           <ChartCard title="New Customer Registrations">
             <BarChart data={registrationChartData} color="#8b5cf6" gradientId="grad-registrations" />
@@ -685,6 +930,15 @@ export default function AnalyticsPage() {
           onClose={() => setModalOpen(false)}
           drivers={drivers}
           vehicles={vehicles}
+        />
+      )}
+
+      {newCustomersOpen && (
+        <NewCustomersModal
+          rangeQuery={buildRangeQuery(filters)}
+          periodText={periodLabel(filters)}
+          otherFiltersActive={Boolean(filters.driverId || filters.vehicleId)}
+          onClose={closeNewCustomers}
         />
       )}
     </div>

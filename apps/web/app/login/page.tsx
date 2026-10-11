@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, FormEvent, useEffect, Suspense } from "react";
-import { signIn, useSession } from "next-auth/react";
+import { useState, FormEvent, Suspense } from "react";
+import { signIn } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
+import InstallPrompt from "../components/InstallPrompt";
 
 // Inner form component that uses useSearchParams
 function LoginForm() {
@@ -11,58 +12,48 @@ function LoginForm() {
     const searchParams = useSearchParams();
     const role = searchParams?.get("role"); // 'admin' or 'driver'
 
-    const { data: session, status } = useSession();
     const [username, setUsername] = useState("");
     const [password, setPassword] = useState("");
     const [error, setError] = useState("");
     const [loading, setLoading] = useState(false);
 
-    // Auto-redirect if already logged in
-    useEffect(() => {
-        if (status === "authenticated" && session?.user) {
-            if (session.user.role === "admin") {
-                router.replace("/admin/amounts");
-            } else if (session.user.role === "driver") {
-                router.replace("/driver");
-            }
-        }
-    }, [session, status, router]);
-
-    if (status === "loading" || status === "authenticated") {
-        return (
-            <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "var(--bg-secondary)" }}>
-                <div style={{ color: "var(--text-secondary)", fontSize: "0.9rem", fontWeight: 500 }}>Redirecting…</div>
-            </div>
-        );
-    }
+    // Anyone already signed in is redirected by proxy.ts before this page
+    // renders, so there is no session check here and the form paints at once.
 
     async function handleSubmit(e: FormEvent) {
         e.preventDefault();
         setError("");
         setLoading(true);
 
-        const res = await signIn("credentials", {
-            username,
-            password,
-            redirect: false,
-        });
+        try {
+            const res = await signIn("credentials", {
+                username,
+                password,
+                redirect: false,
+            });
 
-        setLoading(false);
+            if (!res?.ok) {
+                setError("Invalid username or password.");
+                setLoading(false);
+                return;
+            }
 
-        if (!res?.ok) {
-            setError("Invalid username or password.");
-            return;
-        }
+            // The role decides which portal to open. replace() keeps the login
+            // page out of the back-button history.
+            const sessionRes = await fetch("/api/auth/session", { cache: "no-store" });
+            const sess = (await sessionRes.json()) as { user?: { role?: string } };
 
-        const sessionRes = await fetch("/api/auth/session");
-        const sess = await sessionRes.json() as { user?: { role: string } };
-
-        if (sess?.user?.role === "admin") {
-            router.push("/admin/amounts");
-        } else if (sess?.user?.role === "driver") {
-            router.push("/driver");
-        } else {
-            setError("Unexpected error. Please try again.");
+            if (sess?.user?.role === "admin") {
+                router.replace("/admin/amounts");
+            } else if (sess?.user?.role === "driver") {
+                router.replace("/driver");
+            } else {
+                setError("Unexpected error. Please try again.");
+                setLoading(false);
+            }
+        } catch {
+            setLoading(false);
+            setError("Network error. Please check your connection and try again.");
         }
     }
 
@@ -93,7 +84,7 @@ function LoginForm() {
 
                         <div className="form-group">
                             <label className="form-label" htmlFor="password">Password</label>
-                            <input id="password" type="password" className="form-input" placeholder="Enter your password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="new-password" required />
+                            <input id="password" type="password" className="form-input" placeholder="Enter your password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="current-password" required />
                         </div>
 
                         {error && <div className="alert alert-error">{error}</div>}
@@ -120,6 +111,10 @@ function LoginForm() {
                             </Link>
                         ) : null}
                     </div>
+                </div>
+
+                <div style={{ marginTop: "1rem" }}>
+                    <InstallPrompt />
                 </div>
             </div>
         </div>

@@ -23,7 +23,7 @@ export default function AdminError({
                     Page error
                 </h2>
                 <p style={{ color: "var(--text-secondary)", marginBottom: "1.5rem", fontSize: "0.9rem" }}>
-                    {error.message || "Something went wrong loading this page."}
+                    Something went wrong. Please try again.
                 </p>
                 <button onClick={reset} className="btn btn-primary" style={{ padding: "0.65rem 1.25rem" }}>
                     Retry
